@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.DS_Store
+.env
+bot.log
+trade_log.csv
+daily_scan_results.csv

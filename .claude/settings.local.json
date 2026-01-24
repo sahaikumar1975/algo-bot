@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(streamlit run:*)",
+      "Bash(pip3 install:*)",
+      "Bash(python3:*)",
+      "Bash(cat:*)",
+      "Bash(lsof:*)",
+      "Bash(chmod:*)",
+      "Bash(pkill:*)"
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "telegram_token": "YOUR_BOT_TOKEN_HERE",
+  "telegram_chat": "@your_channel_or_chat_id",
+  "fyers": {
+    "access_token": "YOUR_FYERS_ACCESS_TOKEN",
+    "enabled": false,
+    "base_url": "https://api.fyers.in"
+  },
+  "schedule": {
+    "cron_minute": 31,
+    "cron_hour": 15,
+    "days_of_week": "mon-fri"
+  },
+  "trade": {
+    "enabled": false,
+    "capital": 100000,
+    "risk_per_trade": 0.01,
+    "initial_sl_pct": 0.02,
+    "trailing_sl_pct": 0.02
+  }
+}

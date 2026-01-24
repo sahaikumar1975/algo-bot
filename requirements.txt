@@ -1,0 +1,11 @@
+streamlit
+pandas
+numpy
+plotly
+yfinance
+fyers-apiv3
+google-generativeai
+requests
+ta-lib-bin # Binary for TA-Lib if needed, or stick to pandas_ta if used? 
+# We used manual calc or pandas only so far? 
+# checked code: we used manual pandas calculations (rolling, ewm) in day_trading_strategy.py. No TA-Lib imported.
