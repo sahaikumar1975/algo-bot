@@ -9,6 +9,7 @@ import logging
 import json
 import google.generativeai as genai
 from typing import Dict, Any
+import numpy as np
 
 class AIValidator:
     def __init__(self, api_key: str = None):
@@ -18,7 +19,7 @@ class AIValidator:
         if self.api_key:
             try:
                 genai.configure(api_key=self.api_key)
-                self.model = genai.GenerativeModel('gemini-1.5-flash')
+                self.model = genai.GenerativeModel('gemini-flash-latest')
             except Exception as e:
                 logging.error(f"Failed to initialize Gemini AI: {e}")
 
@@ -30,15 +31,22 @@ class AIValidator:
         if not self.model:
             return {'valid': True, 'reason': 'AI Validation Disabled (No API Key)'}
 
+        def default(o):
+            if isinstance(o, (np.integer, np.int64)): return int(o)
+            if isinstance(o, (np.floating, np.float64)): return float(o)
+            raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
+
         prompt = f"""
         You are a professional day trader. Validate this trade setup and recommend a Strategy Mode.
+
 
         Ticker: {ticker}
         Signal: {signal}
         Entry Price: {price}
         
+        
         Technical Context:
-        {json.dumps(technicals, indent=2)}
+        {json.dumps(technicals, indent=2, default=default)}
         
         Task:
         1. Validate the trade (High Probability?).

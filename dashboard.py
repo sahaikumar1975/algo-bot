@@ -69,11 +69,12 @@ st.markdown("""
 # --------------------------
 with st.sidebar.expander("🔐 Fyers Live Login", expanded=False):
     # Try to load from Secrets, else Empty
-    default_app_id = st.secrets.get("FYERS_APP_ID", "")
-    default_secret = st.secrets.get("FYERS_SECRET_ID", "")
+    # Hardcoded Credentials
+    default_app_id = "SW02VFH9PP-100"
+    default_secret = "2XQJ9KWTLR"
     
-    fyers_app_id = st.text_input("Client ID (App ID)", value=default_app_id, help="e.g., XCXXXXX-100")
-    fyers_secret = st.text_input("Secret Key", value=default_secret, type="password")
+    fyers_app_id = st.text_input("Client ID (App ID)", value=default_app_id, help="e.g., XCXXXXX-100", key="fyers_app_id_new")
+    fyers_secret = st.text_input("Secret Key", value=default_secret, type="password", key="fyers_secret_new")
     fyers_redirect = st.text_input("Redirect URI", value="https://trade.fyers.in/api-login/redirect-uri/index.html")
 
     if st.button("Generate Login Link"):
@@ -428,7 +429,7 @@ def plot_day_trading_chart(df, trades, ticker):
 
 
 def main():
-    st.title("📈 Nifty 200 Swing Trading App")
+    st.title("📈 Nifty 200 Swing Trading App (UPDATED)")
     st.markdown("*Professional Multi-Indicator Strategy with Backtesting*")
     st.markdown("---")
     # Sidebar
@@ -490,16 +491,19 @@ def main():
         # Check if process is running
         try:
             # Simple check for python process with 'live_bot.py'
-            cmd = "ps -ef | grep 'live_bot.py' | grep -v grep"
+            # Robust check using pgrep
+            cmd = "pgrep -f live_bot.py"
             output = subprocess.check_output(cmd, shell=True).decode()
-            if 'live_bot.py' in output:
+            if output.strip():
                 bot_running = True
-        except:
+        except subprocess.CalledProcessError:
+            bot_running = False
+        except Exception as e:
             bot_running = False
             
         # AI Configuration
         with st.expander("🤖 AI Configuration (Gemini)", expanded=False):
-            default_gemini = st.secrets.get("GEMINI_API_KEY", "")
+            default_gemini = "AIzaSyDbFnBpTKxN5ZR_SZS4Lmhq9P6_UImaeHk"
             api_key = st.text_input("Gemini API Key", value=default_gemini, type="password", key="gemini_key")
             if api_key:
                 st.session_state['gemini_api_key'] = api_key

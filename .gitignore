@@ -5,3 +5,4 @@ __pycache__/
 bot.log
 trade_log.csv
 daily_scan_results.csv
+.streamlit/

@@ -74,7 +74,8 @@ def get_watchlist():
              res = scan_stock(ticker)
              if res: # Indices don't need Narrow CPR strictly, just Trend
                  watchlist.append({'ticker': ticker, 'trend': res['Trend']})
-        except:
+        except Exception as e:
+             logging.error(f"Error scanning index {ticker}: {e}")
              continue
 
     # Simple scan (not threaded here to avoid complexity in bot loop)
@@ -89,7 +90,8 @@ def get_watchlist():
                     'ticker': ticker,
                     'trend': res['Trend'] # BULLISH or BEARISH
                 })
-        except:
+        except Exception as e:
+            logging.error(f"Error scanning stock {ticker}: {e}")
             continue
             
     logging.info(f"Watchlist created: {len(watchlist)} stocks found.")
@@ -235,7 +237,7 @@ def check_for_signals(watchlist):
                     logging.info(f"AI REJECTED {ticker} {signal}: {ai_decision['reason']}")
                 
         except Exception as e:
-            # logging.error(f"Error checking {ticker}: {e}")
+            logging.error(f"Error checking {ticker}: {e}")
             continue
 
 def monitor_positions():

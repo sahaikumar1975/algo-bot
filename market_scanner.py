@@ -110,7 +110,7 @@ def scan_stock(ticker):
         }
 
     except Exception as e:
-        # print(f"Error scanning {ticker}: {e}")
+        print(f"Error scanning {ticker}: {e}")
         return None
 
 def run_scanner():
