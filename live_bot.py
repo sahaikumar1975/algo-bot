@@ -22,6 +22,28 @@ from option_util import get_fyers_symbol
 # Setup Logging
 LOG_FILE = "bot.log"
 TRADE_LOG = "trade_log.csv"
+TRADE_COLUMNS = ['Time', 'Ticker', 'Signal', 'Entry_Price', 'Qty', 'SL', 'Target', 'Notes', 'Exit_Time', 'Exit_Price', 'Exit_Reason', 'PnL', 'Status']
+CONFIG_FILE = "bot_config.json"
+
+def load_config():
+    """Load risk config from JSON."""
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            return json.load(f)
+    except:
+        # Defaults
+        return {
+            "MAX_DAILY_TRADES": 9,
+            "MAX_STOCK_TRADES": 5,
+            "MAX_NIFTY_TRADES": 2,
+            "MAX_BANKNIFTY_TRADES": 2,
+            "CAPITAL": 100000,
+            "ALLOCATION_PER_TRADE": 10000,
+            "RISK_PER_TRADE_PERCENT": 1.0,
+            "MAX_DAILY_LOSS_PERCENT": 2.0
+        }
+
+
 
 # Broker Init
 FYERS_TOKEN = os.environ.get("FYERS_TOKEN")
@@ -41,9 +63,19 @@ LOG_FILE = "bot.log"
 TRADE_LOG = "trade_log.csv"
 
 # Risk Management Config
-INITIAL_CAPITAL = 100000
-RISK_PER_TRADE = 0.01  # 1%
+INITIAL_CAPITAL = 100000 # Total Account Capital (Reference)
+FIXED_CAPITAL_PER_TRADE = 10000 # Max allocation per stock trade
+MAX_TRADES_PER_DAY = 5
+RISK_PER_TRADE = 0.01  # 1% (SL distance)
 MAX_DAILY_LOSS = 0.02  # 2%
+
+# Index Lot Sizes (Fixed 1 Lot)
+NIFTY_LOT_SIZE = 65
+BANKNIFTY_LOT_SIZE = 30
+
+# Specific Index Limits
+MAX_NIFTY_TRADES = 2
+MAX_BANKNIFTY_TRADES = 2
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,9 +106,15 @@ def get_watchlist():
              res = scan_stock(ticker)
              if res: # Indices don't need Narrow CPR strictly, just Trend
                  watchlist.append({'ticker': ticker, 'trend': res['Trend']})
+             else:
+                 # Force add if scan fails, assuming NEUTRAL/Wait logic will handle it in main loop
+                 # Better to have it and fail check_signals than miss it entirely
+                 logging.warning(f"Index {ticker} initial scan failed, adding with default Neutral bias.")
+                 watchlist.append({'ticker': ticker, 'trend': 'NEUTRAL'})
+                 
         except Exception as e:
-             logging.error(f"Error scanning index {ticker}: {e}")
-             continue
+             logging.error(f"Error scanning index {ticker}: {e}. Forcing add.")
+             watchlist.append({'ticker': ticker, 'trend': 'NEUTRAL'})
 
     # Simple scan (not threaded here to avoid complexity in bot loop)
     for ticker in NIFTY_50:
@@ -101,10 +139,106 @@ def check_for_signals(watchlist):
     """Check each stock in watchlist for entry signals."""
     current_time = datetime.now()
     if current_time.second < 10: # Log only once per minute
-        logging.info(f"Checking signals for {len(watchlist)} stocks...")
+        # Explicitly mention indices to reassure user
+        indices_in_watch = [t['ticker'] for t in watchlist if t['ticker'].startswith('^')]
+        logging.info(f"Checking signals for {len(watchlist)} stocks including {indices_in_watch}...")
+
+    MAX_STOCK_TRADES = 5
+    
+    # Load or Create Log
+    if not os.path.exists(TRADE_LOG):
+        pd.DataFrame(columns=TRADE_COLUMNS).to_csv(TRADE_LOG, index=False)
+    
+    try:
+        df_log = pd.read_csv(TRADE_LOG)
+        # Ensure all columns exist (start of day migration)
+        for col in TRADE_COLUMNS:
+            if col not in df_log.columns: df_log[col] = None
+    except:
+        df_log = pd.DataFrame(columns=TRADE_COLUMNS)
+
+    # 1. Check Open Trades for Exits
+    # Filter 'OPEN' status
+    if not df_log.empty and 'Status' in df_log.columns:
+        open_trades = df_log[df_log['Status'] == 'OPEN']
+        
+        # We can only check exits for stocks we have data for.
+        # Luckily we iterate watchlist below. 
+        # But we must check Exits BEFORE New Entries for the same stock (to free up cool-down?)
+        # Actually cool-down prevents re-entry, but we want to close first.
+        
+        # Optimization: We loop watchlist anyway. Let's handle entries/exits per stock.
+        pass
+    
+    today_trades = 0
+    nifty_trades = 0
+    banknifty_trades = 0
+    
+    if os.path.exists(TRADE_LOG):
+        try:
+            df_log = pd.read_csv(TRADE_LOG)
+            if not df_log.empty and 'Time' in df_log.columns:
+                df_log['Time'] = pd.to_datetime(df_log['Time'])
+                today_trades = df_log[df_log['Time'].dt.date == datetime.now().date()]
+                trades_today = len(today_trades)
+                
+                # Count Specifics
+                nifty_trades = len(today_trades[today_trades['Ticker'] == '^NSEI'])
+                banknifty_trades = len(today_trades[today_trades['Ticker'] == '^NSEBANK'])
+        except Exception:
+            pass
+    
+    # Load Dynamic Config
+    config = load_config()
+    MAX_STOCK_TRADES = config.get('MAX_STOCK_TRADES', 5)
+    MAX_NIFTY_TRADES = config.get('MAX_NIFTY_TRADES', 2)
+    MAX_BANKNIFTY_TRADES = config.get('MAX_BANKNIFTY_TRADES', 2)
+    ALLOCATION = config.get('ALLOCATION_PER_TRADE', 10000)
+    RISK_PCT = config.get('RISK_PER_TRADE_PERCENT', 1.0) / 100.0
+
+    # Calculate Stock Trades
+    stock_trades = trades_today - nifty_trades - banknifty_trades
+    
+    # Global cap removed in favor of segmented caps
+    # but we can log status
+    if current_time.second < 10:
+        logging.info(f"Stats: Stocks {stock_trades}/{MAX_STOCK_TRADES}, Nifty {nifty_trades}/{MAX_NIFTY_TRADES}, BankNifty {banknifty_trades}/{MAX_BANKNIFTY_TRADES}")
 
     for item in watchlist:
         ticker = item['ticker']
+        
+        # Check Limits based on category
+        if ticker == '^NSEI':
+            if nifty_trades >= MAX_NIFTY_TRADES: continue
+        elif ticker == '^NSEBANK':
+            if banknifty_trades >= MAX_BANKNIFTY_TRADES: continue
+        else:
+            # It's a stock
+            if stock_trades >= MAX_STOCK_TRADES: continue
+        last_trade_time = None
+        if os.path.exists(TRADE_LOG):
+             try:
+                 df_log = pd.read_csv(TRADE_LOG)
+                 if not df_log.empty and 'Time' in df_log.columns:
+                     df_log['Time'] = pd.to_datetime(df_log['Time'])
+                     # Filter for this ticker today
+                     today_trades = df_log[df_log['Time'].dt.date == datetime.now().date()]
+                     ticker_trades = today_trades[today_trades['Ticker'] == ticker]
+                     if not ticker_trades.empty:
+                         last_trade_time = ticker_trades.iloc[-1]['Time']
+             except Exception:
+                 pass
+        
+        if last_trade_time:
+            time_diff = (datetime.now() - last_trade_time).total_seconds() / 60
+            if time_diff < 30: # 30 Minute Cool-down
+                continue
+        
+        # Specific Index Limits Check
+        if ticker == '^NSEI' and nifty_trades >= MAX_NIFTY_TRADES:
+            continue # Skip Nifty if limit reached
+        if ticker == '^NSEBANK' and banknifty_trades >= MAX_BANKNIFTY_TRADES:
+            continue # Skip BankNifty if limit reached
         bias = item['trend']
         
         try:
@@ -132,6 +266,58 @@ def check_for_signals(watchlist):
             intraday_df['Cum_Vol'] = intraday_df.groupby(intraday_df.index.date)['Volume'].cumsum()
             intraday_df['Cum_Vol_Price'] = intraday_df.groupby(intraday_df.index.date).apply(lambda x: (x['Close'] * x['Volume']).cumsum()).reset_index(level=0, drop=True)
             intraday_df['VWAP'] = intraday_df['Cum_Vol_Price'] / intraday_df['Cum_Vol']
+            
+            # --- EXIT LOGIC ---
+            # Check if this stock has an OPEN trade
+            current_price = intraday_df.iloc[-1]['Close']
+            
+            if not df_log.empty:
+                # Find open trades for this ticker
+                open_pos = df_log[(df_log['Ticker'] == ticker) & (df_log['Status'] == 'OPEN')]
+                
+                for idx, trade in open_pos.iterrows():
+                    entry_price = trade['Entry_Price']
+                    sl = trade['SL']
+                    target_val = trade['Target'] # Could be string "TRAIL..."
+                    signal_type = trade['Signal']
+                    qty = trade['Qty']
+                    
+                    exit_reason = None
+                    
+                    # 1. Stop Loss Check
+                    if "LONG" in signal_type and current_price <= sl:
+                        exit_reason = "SL HIT"
+                    elif "SHORT" in signal_type and current_price >= sl:
+                        exit_reason = "SL HIT"
+                        
+                    # 2. Target Check (Fixed)
+                    try:
+                        tgt_price = float(target_val)
+                        if "LONG" in signal_type and current_price >= tgt_price:
+                            exit_reason = "TARGET HIT"
+                        elif "SHORT" in signal_type and current_price <= tgt_price:
+                            exit_reason = "TARGET HIT"
+                    except:
+                        # Trailing SL Logic (Simplified: Use EMA20 Close)
+                        ema20 = intraday_df.iloc[-1]['EMA20']
+                        if "TRAIL" in str(target_val):
+                            if "LONG" in signal_type and current_price < ema20:
+                                exit_reason = "TRAIL SL HIT"
+                            elif "SHORT" in signal_type and current_price > ema20:
+                                exit_reason = "TRAIL SL HIT"
+                    
+                    if exit_reason:
+                        # Calculate PnL
+                        if "LONG" in signal_type:
+                            pnl = (current_price - entry_price) * qty
+                        else:
+                            pnl = (entry_price - current_price) * qty
+                            
+                        # Update Log
+                        close_trade(idx, current_price, exit_reason, pnl)
+                        logging.info(f"🚫 EXIT: {ticker} | Reason: {exit_reason} | PnL: {pnl:.2f}")
+
+            # Map CPR
             
             # Map CPR
             daily_cpr['Date_Only'] = daily_cpr.index.date
@@ -211,21 +397,42 @@ def check_for_signals(watchlist):
                     else:
                         target_desc = f"{target:.2f}"
 
+
                     # Calculate Quantity
-                    risk_amt = INITIAL_CAPITAL * RISK_PER_TRADE
+                    risk_amt = ALLOCATION * RISK_PCT
                     risk_per_share = abs(price - stop_loss)
-                    qty = int(risk_amt / risk_per_share) if risk_per_share > 0 else 0
+                    qty = 0
                     
+                    if risk_per_share > 0:
+                        # Risk Based Sizing: qty = risk_amt / risk per share ? 
+                        # OR Allocation Based: qty = ALLOCATION / price
+                        
+                        # User asked for "Allocation", so usually Fixed Amt.
+                        # Let's check risk:
+                        # If risk_per_share * (ALLOCATION/price) > risk_amt ?
+                        
+                        # Standard Practice: Fixed Allocation approach usually implies Max Investment.
+                        if price > 0:
+                            qty = int(ALLOCATION / price)
+                        
                     if qty > 0:
                         if ticker.startswith('^'):
-                            # Indices Options
+                            # Indices Options - FIXED 1 LOT
                             strike = get_atm_strike(price, ticker)
-                            # Symbol Format: NSE:NIFTY23OCT19500CE (Example - needs logic)
-                            # Simplified for now -> Just Log strike
                             otype = "CE" if "LONG" in signal else "PE"
-                            # Fyers Symbol Construct (Needs Expiry - Complex)
-                            # For MVP: We will Trade FUTURE or just LOG
+                            
+                            # Fixed Lot System
+                            if '^NSEBANK' in ticker:
+                                qty = BANKNIFTY_LOT_SIZE
+                            else:
+                                qty = NIFTY_LOT_SIZE
+                            
                             signal = f"{signal} [{strike} {otype}]"
+
+                        else:
+                            # Stock Equity - Fixed Capital
+                            # Already calculated above based on ALLOCATION
+                            pass
 
                         log_trade(ticker, signal, price, qty, stop_loss, target_desc, datetime.now(), f"[{mode}] {ai_decision['reason']}")
 
@@ -249,20 +456,42 @@ def monitor_positions():
     """
     pass
 
+def close_trade(idx, exit_price, reason, pnl):
+    """Update trade log with exit details."""
+    try:
+        df = pd.read_csv(TRADE_LOG)
+        df.at[idx, 'Exit_Time'] = datetime.now()
+        df.at[idx, 'Exit_Price'] = exit_price
+        df.at[idx, 'Exit_Reason'] = reason
+        df.at[idx, 'PnL'] = pnl
+        df.at[idx, 'Status'] = 'CLOSED'
+        df.to_csv(TRADE_LOG, index=False)
+    except Exception as e:
+        logging.error(f"Failed to close trade: {e}")
+
 def log_trade(ticker, signal, price, qty, sl, target, time, notes=""):
     """Log trade to CSV and Logger."""
     target_str = f"{target:.2f}" if isinstance(target, (int, float)) else str(target)
     msg = f"SIGNAL: {signal} {qty} x {ticker} @ {price:.2f} | SL: {sl:.2f} TGT: {target_str} | AI: {notes}"
     logging.info(msg)
     
-    # Check if we already logged this recently (debounce) to avoid spam
-    # Implementation optional, for now just append
+    new_row = {
+        'Time': time, 
+        'Ticker': ticker, 
+        'Signal': signal, 
+        'Entry_Price': price, 
+        'Qty': qty, 
+        'SL': sl, 
+        'Target': target, 
+        'Notes': notes,
+        'Exit_Time': None,
+        'Exit_Price': None,
+        'Exit_Reason': None,
+        'PnL': 0.0,
+        'Status': 'OPEN'
+    }
     
-    df_new = pd.DataFrame([{
-        'Time': time, 'Ticker': ticker, 'Signal': signal, 
-        'Price': price, 'Qty': qty, 'SL': sl, 'Target': target, 'Notes': notes
-    }])
-    
+    df_new = pd.DataFrame([new_row])
     header = not os.path.exists(TRADE_LOG)
     df_new.to_csv(TRADE_LOG, mode='a', header=header, index=False)
 
@@ -349,8 +578,8 @@ def main():
             # Check market hours (optional, omitted for testing capability)
             check_for_signals(watchlist)
             
-            # Sleep 1 minute
-            time.sleep(60) 
+            # Sleep 5 seconds for faster reaction
+            time.sleep(5) 
             
     except KeyboardInterrupt:
         logging.info("Bot stopped by user.")

@@ -13,6 +13,7 @@ import concurrent.futures
 from datetime import datetime, timedelta
 import os
 import sys
+import time
 
 # Import logic from strategy file
 from day_trading_strategy import calculate_cpr, add_rsi
@@ -27,9 +28,29 @@ NIFTY_50 = [
     "ADANIENT.NS", "ADANIPORTS.NS", "TATAMOTORS.NS", "WIPRO.NS", "COALINDIA.NS",
     "ONGC.NS", "BAJAJFINSV.NS", "GRASIM.NS", "TECHM.NS", "HDFCLIFE.NS",
     "BRITANNIA.NS", "HEROMOTOCO.NS", "INDUSINDBANK.NS", "CIPLA.NS", "DIVISLAB.NS",
-    "NESTLEIND.NS", "BPCL.NS", "EICHERMOT.NS", "TATACONSUM.NS", "APOLLOHOSP.NS",
     "DRREDDY.NS", "UPL.NS", "SBILIFE.NS", "BAJAJ-AUTO.NS", "HINDALCO.NS"
 ]
+
+def download_with_retry(ticker, period, interval, retries=3):
+    """
+    Downloads data with retry mechanism for transient network errors.
+    """
+    last_exception = None
+    for i in range(retries):
+        try:
+            df = yf.download(ticker, period=period, interval=interval, progress=False)
+            return df
+        except Exception as e:
+            last_exception = e
+            if i < retries - 1:
+                sleep_time = 2 * (i + 1)
+                # print(f"⚠️ Network error for {ticker}. Retrying in {sleep_time}s...")
+                time.sleep(sleep_time)
+            
+    # If all retries fail, re-raise the last exception
+    if last_exception:
+        raise last_exception
+    return pd.DataFrame()
 
 def scan_stock(ticker):
     """
@@ -37,7 +58,8 @@ def scan_stock(ticker):
     """
     try:
         # 1. Fetch Daily Data (Last 5 days is enough for CPR)
-        daily_df = yf.download(ticker, period='5d', interval='1d', progress=False)
+        # 1. Fetch Daily Data (Last 5 days is enough for CPR)
+        daily_df = download_with_retry(ticker, period='5d', interval='1d')
         if daily_df.empty or len(daily_df) < 2: return None
         
         # Clean columns
@@ -70,7 +92,9 @@ def scan_stock(ticker):
         
         # 5. Fetch Intraday Data (Current state)
         # Fetch last 5 candles to check current price status
-        intraday = yf.download(ticker, period='1d', interval='5m', progress=False)
+        # 5. Fetch Intraday Data (Current state)
+        # Fetch last 5 candles to check current price status
+        intraday = download_with_retry(ticker, period='1d', interval='5m')
         if isinstance(intraday.columns, pd.MultiIndex):
             intraday.columns = intraday.columns.get_level_values(0)
             
@@ -120,7 +144,7 @@ def run_scanner():
     results = []
     
     # Run in parallel
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         futures = {executor.submit(scan_stock, t): t for t in NIFTY_50}
         for future in concurrent.futures.as_completed(futures):
             res = future.result()

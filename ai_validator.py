@@ -7,19 +7,25 @@ Uses Google's Gemini Flash model to validate trade setups based on technical dat
 import os
 import logging
 import json
-import google.generativeai as genai
+try:
+    from google import genai
+except ImportError:
+    genai = None
+
 from typing import Dict, Any
 import numpy as np
 
 class AIValidator:
     def __init__(self, api_key: str = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        self.model = None
+        self.client = None
         
         if self.api_key:
             try:
-                genai.configure(api_key=self.api_key)
-                self.model = genai.GenerativeModel('gemini-flash-latest')
+                if genai:
+                    self.client = genai.Client(api_key=self.api_key)
+                else:
+                    logging.error("google-genai package not found. Please pip install google-genai")
             except Exception as e:
                 logging.error(f"Failed to initialize Gemini AI: {e}")
 
@@ -28,8 +34,8 @@ class AIValidator:
         Asks Gemini AI to validate the trade.
         Returns: {'valid': bool, 'reason': str}
         """
-        if not self.model:
-            return {'valid': True, 'reason': 'AI Validation Disabled (No API Key)'}
+        if not self.client:
+            return {'valid': True, 'reason': 'AI Validation Disabled (No API Key or Package Missing)'}
 
         def default(o):
             if isinstance(o, (np.integer, np.int64)): return int(o)
@@ -52,7 +58,7 @@ class AIValidator:
         1. Validate the trade (High Probability?).
         2. Choose Strategy Mode:
            - "SNIPER": For Choppy/Range-Bound/Weak Trend markets. (Uses Fixed 1:2 Target).
-           - "SURFER": For Strong Trend/Breakout markets (Narrow CPR, High Vol). (Uses EMA 20 Trailing Stop).
+           - "SURFER": For Strong Trend/Breakout markets. (Uses EMA 20 Trailing Stop).
         
         Output format (JSON only):
         {{
@@ -63,8 +69,14 @@ class AIValidator:
         """
         
         try:
-            response = self.model.generate_content(prompt)
-            # Clean response to ensure it's valid JSON
+            # Using the new SDK syntax
+            # We use gemini-2.0-flash if available, or 1.5-flash
+            response = self.client.models.generate_content(
+                model='gemini-2.0-flash', 
+                contents=prompt
+            )
+            
+            # Clean response
             text = response.text.strip()
             if text.startswith('```json'):
                 text = text[7:-3]

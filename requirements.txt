@@ -6,3 +6,4 @@ yfinance
 fyers-apiv3
 google-generativeai
 requests
+python-dotenv

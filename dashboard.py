@@ -14,8 +14,72 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import os
+import re
+from dotenv import load_dotenv
+import yfinance as yf
+from fyers_integration import FyersApp
+import json
+
+# Load environment variables
+load_dotenv()
+
+CONFIG_FILE = "bot_config.json"
+
+def load_config():
+    """Load bot configuration."""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+        except:
+            pass
+    return {
+        "MAX_DAILY_TRADES": 9,
+        "MAX_STOCK_TRADES": 5,
+        "MAX_NIFTY_TRADES": 2,
+        "MAX_BANKNIFTY_TRADES": 2,
+        "CAPITAL": 100000,
+        "ALLOCATION_PER_TRADE": 10000,
+        "RISK_PER_TRADE_PERCENT": 1.0,
+        "MAX_DAILY_LOSS_PERCENT": 2.0
+    }
+
+def save_config(config):
+    """Save bot configuration."""
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=4)
+
+
+def set_key(file_path, key, value):
+    """Updates or adds a key-value pair in the .env file."""
+    if not os.path.exists(file_path):
+        with open(file_path, "w") as f:
+            f.write(f"{key}={value}\n")
+        return
+
+    with open(file_path, "r") as f:
+        lines = f.readlines()
+
+    new_lines = []
+    key_found = False
+    
+    for line in lines:
+        if line.strip().startswith(f"{key}="):
+            new_lines.append(f"{key}={value}\n")
+            key_found = True
+        else:
+            new_lines.append(line)
+    
+    if not key_found:
+        if new_lines and not new_lines[-1].endswith('\n'):
+            new_lines[-1] += '\n'
+        new_lines.append(f"{key}={value}\n")
+
+    with open(file_path, "w") as f:
+        f.writelines(new_lines)
 
 from swing_strategy import (
     fetch_ohlc_extended, add_all_indicators, detect_swing_signal,
@@ -70,8 +134,10 @@ st.markdown("""
 with st.sidebar.expander("🔐 Fyers Live Login", expanded=False):
     # Try to load from Secrets, else Empty
     # Hardcoded Credentials
-    default_app_id = "SW02VFH9PP-100"
-    default_secret = "2XQJ9KWTLR"
+    # Try to load from Secrets, else Empty
+    # Hardcoded Credentials (Fallback)
+    default_app_id = os.getenv("FYERS_APP_ID", "SW02VFH9PP-100")
+    default_secret = os.getenv("FYERS_SECRET", "2XQJ9KWTLR")
     
     fyers_app_id = st.text_input("Client ID (App ID)", value=default_app_id, help="e.g., XCXXXXX-100", key="fyers_app_id_new")
     fyers_secret = st.text_input("Secret Key", value=default_secret, type="password", key="fyers_secret_new")
@@ -83,10 +149,15 @@ with st.sidebar.expander("🔐 Fyers Live Login", expanded=False):
         fyers_redirect = fyers_redirect.strip()
         
         if fyers_app_id and fyers_secret:
+            # Save to .env for persistence
+            set_key(".env", "FYERS_APP_ID", fyers_app_id)
+            set_key(".env", "FYERS_SECRET", fyers_secret)
+            
             app = FyersApp(fyers_app_id, fyers_secret, redirect_uri=fyers_redirect)
             auth_url = app.get_login_url()
             st.markdown(f"[**👉 Click to Login**]({auth_url})", unsafe_allow_html=True)
             st.info("1. Click Link & Login\n2. Copy 'auth_code' from URL\n3. Paste below")
+            st.success("Credentials saved to .env")
         else:
             st.error("Enter App ID & Secret")
 
@@ -97,16 +168,27 @@ with st.sidebar.expander("🔐 Fyers Live Login", expanded=False):
         fyers_secret = fyers_secret.strip()
         
         # Smart Extraction: Handle full URL paste
-        if "auth_code=" in auth_code_input:
-            try:
-                import urllib.parse
-                parsed = urllib.parse.urlparse(auth_code_input)
-                params = urllib.parse.parse_qs(parsed.query)
-                if 'auth_code' in params:
-                    auth_code_input = params['auth_code'][0]
-                    st.success(f"✅ Extracted Code: {auth_code_input[:10]}...{auth_code_input[-5:]}")
-            except:
-                pass 
+        # Smart Extraction: Handle full URL paste
+        if "http" in auth_code_input:
+                try:
+                    import urllib.parse
+                    parsed = urllib.parse.urlparse(auth_code_input)
+                    params = urllib.parse.parse_qs(parsed.query)
+                    
+                    if 'error_msg' in params:
+                        st.error(f"❌ Login Error from Fyers: {params['error_msg'][0]}")
+                        st.warning("💡 Hint: checks your App ID and Secret. 'invalid appId' means the Client ID is wrong.")
+                        st.stop()
+                    
+                    if 'auth_code' in params:
+                        auth_code_input = params['auth_code'][0]
+                        st.success(f"✅ Extracted Code: {auth_code_input[:10]}...{auth_code_input[-5:]}")
+                    else:
+                         st.error("❌ URL detected, but 'auth_code' not found. Ensure you copied the FULL redirected URL.")
+                         st.stop()
+                except Exception as e:
+                    st.error(f"❌ Error parsing URL: {e}")
+                    st.stop()
         
         auth_code_input = auth_code_input.strip()
 
@@ -119,7 +201,8 @@ with st.sidebar.expander("🔐 Fyers Live Login", expanded=False):
                 st.success("✅ Connected! Token Generated.")
                 st.rerun() # Refresh to update sidebar state
             except Exception as e:
-                st.error(f"Login Failed: {e}")
+                masked_code = f"{auth_code_input[:5]}...{auth_code_input[-5:]}" if len(auth_code_input) > 10 else "SHORT_CODE"
+                st.error(f"Login Failed: {e} | Code Used: {masked_code}")
                 st.warning("⚠️ Auth Codes expire in < 1 minute and are ONE-TIME use. Generate a NEW Link!")
         else:
             st.error("Missing Credentials or Auth Code")
@@ -438,14 +521,16 @@ def main():
     st.sidebar.markdown("### Swing Trading")
     swing_page = st.sidebar.radio(
         "Swing Modules",
-        ["🔍 Stock Screener", "📅 Weekly Breakout", "🚀 52-Week High", "📊 High Volume", "📈 Stock Analysis", "👁️ Watchlist", "🏭 Sector Analysis", "🧪 Backtest Swing", "💰 Risk Calculator"]
+        ["🔍 Stock Screener", "📅 Weekly Breakout", "🚀 52-Week High", "📊 High Volume", "📈 Stock Analysis", "👁️ Watchlist", "🏭 Sector Analysis", "🧪 Backtest Swing", "💰 Risk Calculator"],
+        key="swing_nav"
     )
     
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Day Trading Robot")
     dt_page = st.sidebar.radio(
         "Day Trading Modules",
-        ["🤖 Live Bot Manager", "📡 Intraday Scanner", "⚡ Backtest Day Strategy", "⚡ Backtest Indices (Options)"]
+        ["🤖 Live Bot Manager", "📜 Paper Trading P&L", "📡 Intraday Scanner", "⚡ Backtest Day Strategy", "⚡ Backtest Indices (Options)"],
+        key="dt_nav"
     )
     
     # Logic to determine active page
@@ -458,7 +543,7 @@ def main():
     # But Streamlit radios are independent.
     # Visual separation is good. Let's use a SelectBox for Main Mode?
     
-    mode = st.sidebar.selectbox("Select Mode", ["Swing Trading", "Day Trading Robot"])
+    mode = st.sidebar.selectbox("Select Mode", ["Swing Trading", "Day Trading Robot"], key="mode_nav")
     
     page = ""
     if mode == "Swing Trading":
@@ -503,17 +588,38 @@ def main():
             
         # AI Configuration
         with st.expander("🤖 AI Configuration (Gemini)", expanded=False):
-            default_gemini = "AIzaSyDbFnBpTKxN5ZR_SZS4Lmhq9P6_UImaeHk"
-            api_key = st.text_input("Gemini API Key", value=default_gemini, type="password", key="gemini_key")
-            if api_key:
-                st.session_state['gemini_api_key'] = api_key
-                st.caption("✅ Key saved for this session.")
+            # Load from env or session state
+            saved_key = os.getenv("GEMINI_API_KEY")
+            
+            # Mask the key for display if it exists
+            display_value = saved_key if saved_key else ""
+            
+            api_key = st.text_input("Gemini API Key", value=display_value, type="password", key="gemini_key", help="Enter your new key from Google AI Studio")
+            
+            if st.button("Save API Key"):
+                if api_key:
+                    # Save to .env file safely
+                    set_key(".env", "GEMINI_API_KEY", api_key)
+                    
+                    # Update Session & Env in Runtime
+                    os.environ["GEMINI_API_KEY"] = api_key
+                    st.session_state['gemini_api_key'] = api_key
+                    st.success("✅ Key saved securely to .env file!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Please enter a valid key.")
+
+            if saved_key:
+                st.caption("✅ Key is loaded from .env")
             else:
-                st.caption("Enter key to enable AI Validation.")
+                st.warning("⚠️ No API Key found. AI features will be disabled.")
+
+                st.warning("⚠️ No API Key found. AI features will be disabled.")
 
         with col1:
             st.metric("Bot Status", "RUNNING 🟢" if bot_running else "STOPPED 🔴")
-            
+    
         with col2:
             if bot_running:
                 if st.button("🛑 STOP BOT", type="primary"):
@@ -542,6 +648,56 @@ def main():
                     time.sleep(1)
                     st.rerun()
         
+        # --- Risk Management Section ---
+        with st.expander("💰 Risk & Fund Management", expanded=False):
+            config = load_config()
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("##### 💸 Capital Allocation")
+                new_capital = st.number_input("Total Capital (₹)", value=config.get("CAPITAL", 100000), step=5000)
+                new_allocation = st.number_input("Allocation Per Trade (₹)", value=config.get("ALLOCATION_PER_TRADE", 10000), step=1000, help="Amount to invest in each stock trade.")
+                
+                st.markdown("##### 🛡️ Risk Limits")
+                new_risk_pct = st.number_input("Risk Per Trade (%)", value=float(config.get("RISK_PER_TRADE_PERCENT", 1.0)), step=0.1)
+                new_max_loss = st.number_input("Max Daily Loss (%)", value=float(config.get("MAX_DAILY_LOSS_PERCENT", 2.0)), step=0.5)
+
+            with c2:
+                st.markdown("##### 🔢 Trade Frequency Limits")
+                new_stock_limit = st.number_input("Max Stock Trades/Day", value=int(config.get("MAX_STOCK_TRADES", 5)), step=1)
+                new_nifty_limit = st.number_input("Max Nifty Trades/Day", value=int(config.get("MAX_NIFTY_TRADES", 2)), step=1)
+                new_banknifty_limit = st.number_input("Max BankNifty Trades/Day", value=int(config.get("MAX_BANKNIFTY_TRADES", 2)), step=1)
+                
+            if st.button("💾 Save Risk Configuration"):
+                new_config = config.copy()
+                new_config["CAPITAL"] = new_capital
+                new_config["ALLOCATION_PER_TRADE"] = new_allocation
+                new_config["RISK_PER_TRADE_PERCENT"] = new_risk_pct
+                new_config["MAX_DAILY_LOSS_PERCENT"] = new_max_loss
+                new_config["MAX_STOCK_TRADES"] = new_stock_limit
+                new_config["MAX_NIFTY_TRADES"] = new_nifty_limit
+                new_config["MAX_BANKNIFTY_TRADES"] = new_banknifty_limit
+                new_config["MAX_DAILY_TRADES"] = new_stock_limit + new_nifty_limit + new_banknifty_limit
+                
+                save_config(new_config)
+                st.success("Configuration Saved! Bot will pick up changes on next trade check.")
+
+        # --- Error Monitor ---
+        if os.path.exists("bot.log"):
+            with open("bot.log", "r") as f:
+                logs = f.readlines()
+                # Check last 10 lines for ERROR
+                recent_logs = logs[-10:]
+                error_found = False
+                latest_error = ""
+                for line in recent_logs:
+                    if "ERROR" in line:
+                        error_found = True
+                        latest_error = line.strip()
+                
+                if error_found:
+                    st.error(f"⚠️ Bot Reported an Error Recently:\n{latest_error}")
+
         st.subheader("📝 Live Logs (bot.log)")
         if os.path.exists("bot.log"):
             with open("bot.log", "r") as f:
@@ -557,6 +713,197 @@ def main():
             st.dataframe(trades_df)
         else:
             st.info("No trades executed yet.")
+            
+    # --- PAPER TRADING P&L ---
+    elif page == "📜 Paper Trading P&L":
+        st.header("📜 Paper Trading P&L Statement")
+        st.markdown("*Real-time view of trades executed by the Daily Bot.*")
+        st.markdown("---")
+        
+        trade_log_path = "trade_log.csv"
+        
+        # --- Auto Refresh for Live PnL ---
+        if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
+        
+        col_header, col_refresh = st.columns([3,1])
+        with col_header:
+            st.header("📜 Paper Trading P&L")
+        with col_refresh:
+            st.session_state.auto_refresh = st.checkbox("🔴 Live Updates (10s)", value=st.session_state.auto_refresh)
+            
+        if st.session_state.auto_refresh:
+            time.sleep(10)
+            st.rerun()
+
+        
+        if os.path.exists(trade_log_path):
+            try:
+                df = pd.read_csv(trade_log_path)
+                if not df.empty:
+                    # Sort by newest first
+                    if 'Time' in df.columns:
+                        df['Time'] = pd.to_datetime(df['Time'])
+                        # Filter for TODAY only
+                        today_date = datetime.now().date()
+                        df = df[df['Time'].dt.date == today_date]
+                        
+                        df.sort_values(by='Time', ascending=False, inplace=True)
+                    
+                    if df.empty:
+                        st.info("No trades executed today yet.")
+                        total_trades = 0
+                        realized_pnl = 0.0
+                    else:
+                        # Metrics
+                        total_trades = len(df)
+                        realized_pnl = df[df['Status'] == 'CLOSED']['PnL'].sum() if 'PnL' in df.columns else 0.0
+                    
+                    # --- DYNAMIC PNL CALCULATION ---
+                    # Identify Open Trades
+                    open_trades_idx = df[df['Status'] == 'OPEN'].index
+                    unrealized_pnl = 0.0
+                    
+                    if not open_trades_idx.empty:
+                        open_tickers = df.loc[open_trades_idx, 'Ticker'].unique().tolist()
+
+                        current_prices = {}
+                        used_source = "Yahoo (Delayed)"
+                        
+                        # 1. Try Fyers (Real-Time)
+                        if 'fyers_token' in st.session_state and st.session_state['fyers_token']:
+                            try:
+                                # Init Fyers
+                                fyers = FyersApp(
+                                    client_id=st.session_state.get('fyers_client_id', os.getenv('FYERS_CLIENT_ID')), 
+                                    secret_key="secret", 
+                                    access_token=st.session_state['fyers_token']
+                                )
+                                
+                                # Convert Tickers to Fyers Format (NSE:TICKER-EQ)
+                                fyers_symbols = []
+                                fyers_map = {} # Map 'NSE:TICKER-EQ' back to 'TICKER.NS' or 'TICKER'
+                                
+                                for t in open_tickers:
+                                    # Heuristic for symbol mapping
+                                    clean_t = t.replace('.NS', '')
+                                    if clean_t.startswith('^'): # Indices
+                                        if clean_t == '^NSEI': fy = "NSE:NIFTY50-INDEX"
+                                        elif clean_t == '^NSEBANK': fy = "NSE:NIFTYBANK-INDEX"
+                                        else: fy = f"NSE:{clean_t}-INDEX"
+                                    else:
+                                        fy = f"NSE:{clean_t}-EQ"
+                                    
+                                    fyers_symbols.append(fy)
+                                    fyers_map[fy] = t
+                                
+                                quotes = fyers.get_quotes(fyers_symbols)
+                                
+                                if quotes:
+                                    for q in quotes:
+                                        sym = q.get('n')
+                                        lp = q.get('v', {}).get('lp') # LTP
+                                        if sym in fyers_map and lp:
+                                            current_prices[fyers_map[sym]] = float(lp)
+                                    used_source = "Fyers (Live ⚡)"
+                            except Exception as e:
+                                st.error(f"Fyers Real-Time Error: {str(e)}")
+                                st.warning("Falling back to Yahoo Finance...")
+
+                        # 2. Fallback to Yahoo if needed
+                        remaining_tickers = [t for t in open_tickers if t not in current_prices]
+                        if remaining_tickers:
+                            try:
+                                tickers_str = " ".join(remaining_tickers)
+                                live_data = yf.download(tickers_str, period="1d", interval="1m", progress=False)
+                                
+                                # Extract prices logic (Same as before)
+                                if len(remaining_tickers) == 1:
+                                    if not live_data.empty:
+                                        price = live_data['Close'].iloc[-1]
+                                        if isinstance(price, pd.Series): price = price.iloc[0]
+                                        current_prices[remaining_tickers[0]] = float(price)
+                                else:
+                                    if not live_data.empty:
+                                        last_row = live_data['Close'].iloc[-1]
+                                        for t in remaining_tickers:
+                                            if t in last_row:
+                                                current_prices[t] = float(last_row[t])
+                            except Exception as ex:
+                                st.warning(f"Yahoo Fetch Failed: {ex}")
+
+                        st.caption(f"🔄 Fetching prices via: **{used_source}**")
+
+                        try:
+                            # Update Dataframe
+                            for idx in open_trades_idx:
+                                ticker = df.at[idx, 'Ticker']
+
+                                entry = float(df.at[idx, 'Entry_Price'])
+                                qty = int(df.at[idx, 'Qty'])
+                                signal = df.at[idx, 'Signal']
+                                
+                                if ticker in current_prices:
+                                    cmp = current_prices[ticker]
+                                    df.at[idx, 'Exit_Price'] = cmp # Show CMP in Exit Price for Open trades? Or separate? 
+                                    # Let's use a new visual column 'CMP' and leave Exit Price as None (persisted)
+                                    df.at[idx, 'CMP'] = cmp
+                                    
+                                    # Calc PnL
+                                    pnl = 0.0
+                                    if "LONG" in signal:
+                                        pnl = (cmp - entry) * qty
+                                    elif "SHORT" in signal:
+                                        pnl = (entry - cmp) * qty
+                                        
+                                    df.at[idx, 'PnL'] = pnl
+                                    unrealized_pnl += pnl
+                                    
+                                    # Mark as Unrealized in Reason for clarity?
+                                    df.at[idx, 'Exit_Reason'] = "OPEN (Live)"
+                                    
+                        except Exception as e:
+                            st.warning(f"Could not fetch live prices: {e}")
+
+                    total_pnl = realized_pnl + unrealized_pnl
+
+                    # Count wins/loss if PnL available
+                    wins = len(df[df['PnL'] > 0]) if 'PnL' in df.columns else 0
+                    win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    col1.metric("Total Trades", total_trades)
+                    
+                    # Dynamic Label with Live Indicator
+                    pnl_label = "Today's Net P&L (Live)"
+                    col2.metric(pnl_label, f"₹{total_pnl:,.2f}", delta=f"{total_pnl:.2f}")
+                    
+                    col3.metric("Realized", f"₹{realized_pnl:,.2f}")
+                    col4.metric("Unrealized", f"₹{unrealized_pnl:,.2f}", delta_color="off")
+                    
+                    st.subheader("📝 Trade Log Details")
+                    
+                    # Ensure columns order if available
+                    # Add CMP if we created it
+                    display_cols = ['Time', 'Ticker', 'Signal', 'Entry_Price', 'CMP', 'Qty', 'PnL', 'Exit_Reason', 'Status']
+                    
+                    # Fill CMP for closed trades with Exit Price if missing
+                    if 'CMP' not in df.columns: df['CMP'] = df['Exit_Price']
+                    else: df['CMP'].fillna(df['Exit_Price'], inplace=True)
+
+                    # Filter existing columns
+                    final_cols = [c for c in display_cols if c in df.columns]
+                    
+                    # Fallback to all if schema mismatch
+                    if not final_cols: final_cols = df.columns
+                    
+                    # Style PnL
+                    st.dataframe(df[final_cols].style.format({"Entry_Price": "{:.2f}", "CMP": "{:.2f}", "PnL": "{:.2f}"}), use_container_width=True)
+                else:
+                    st.info("Trade Log exists but is empty. Waiting for trades...")
+            except Exception as e:
+                st.error(f"Error reading trade logs: {e}")
+        else:
+            st.warning("No Trade Log found yet. Start the bot to generate trades.")
 
     elif page == "📡 Intraday Scanner":
         st.header("📡 Live Intraday Scanner")

@@ -125,5 +125,26 @@ class FyersApp:
             print(f"Error fetching positions: {e}")
             return pd.DataFrame()
 
+    def get_quotes(self, symbols):
+        """
+        Fetch Real-Time Quotes for a list of symbols.
+        symbols: Comma separated string or list of symbols (e.g. "NSE:NTPC-EQ,NSE:SBIN-EQ")
+        """
+        if not self.fyers: return None
+        try:
+            # Format input
+            if isinstance(symbols, list):
+                symbols = ",".join(symbols)
+            
+            data = {"symbols": symbols}
+            response = self.fyers.quotes(data=data)
+            
+            if 'd' in response:
+                return response['d'] # List of dicts
+            return None
+        except Exception as e:
+            print(f"Error fetching quotes: {e}")
+            return None
+
 if __name__ == "__main__":
     pass
