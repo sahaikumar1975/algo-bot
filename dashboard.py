@@ -648,6 +648,40 @@ def main():
                     time.sleep(1)
                     st.rerun()
         
+                    st.rerun()
+                    
+        # --- MARKET TREND DASHBOARD ---
+        st.subheader("📊 Market Condition (Indices)")
+        if os.path.exists("daily_scan_results.csv"):
+            try:
+                res_df = pd.read_csv("daily_scan_results.csv")
+                
+                # Extract Index Trends
+                nifty = res_df[res_df['Ticker'] == '^NSEI']
+                banknifty = res_df[res_df['Ticker'] == '^NSEBANK']
+                
+                m1, m2 = st.columns(2)
+                
+                with m1:
+                    trend = "NEUTRAL"
+                    if not nifty.empty: trend = nifty.iloc[0]['Trend']
+                    color = "off"
+                    if trend == "BULLISH": color = "normal" 
+                    elif trend == "BEARISH": color = "inverse"
+                    st.metric("NIFTY 50", trend, delta="Up" if trend=="BULLISH" else "Down" if trend=="BEARISH" else None, delta_color=color)
+                    
+                with m2:
+                    trend = "NEUTRAL"
+                    if not banknifty.empty: trend = banknifty.iloc[0]['Trend']
+                    color = "off"
+                    if trend == "BULLISH": color = "normal"
+                    elif trend == "BEARISH": color = "inverse"
+                    st.metric("BANK NIFTY", trend, delta="Up" if trend=="BULLISH" else "Down" if trend=="BEARISH" else None, delta_color=color)
+            except Exception as e:
+                st.error(f"Error loading trends: {e}")
+        else:
+            st.info("Market Scan not yet run today.")
+
         # --- Risk Management Section ---
         with st.expander("💰 Risk & Fund Management", expanded=False):
             config = load_config()
@@ -732,8 +766,8 @@ def main():
             st.session_state.auto_refresh = st.checkbox("🔴 Live Updates (10s)", value=st.session_state.auto_refresh)
             
         if st.session_state.auto_refresh:
-            time.sleep(10)
-            st.rerun()
+            pass # Moved to bottom
+
 
         
         if os.path.exists(trade_log_path):
@@ -903,7 +937,12 @@ def main():
             except Exception as e:
                 st.error(f"Error reading trade logs: {e}")
         else:
-            st.warning("No Trade Log found yet. Start the bot to generate trades.")
+            st.info("No trade log found.")
+
+        # --- Auto Refresh Execution ---
+        if st.session_state.auto_refresh:
+            time.sleep(10)
+            st.rerun()
 
     elif page == "📡 Intraday Scanner":
         st.header("📡 Live Intraday Scanner")

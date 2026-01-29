@@ -251,6 +251,20 @@ def check_for_signals(watchlist):
             
             # Indicators
             daily_cpr = calculate_cpr(daily_df)
+            
+            # DYNAMIC BIAS CHECK: If Neutral (e.g. scan failed), recalc from daily data
+            if bias == "NEUTRAL":
+                try:
+                    curr_cpr = daily_cpr.iloc[-1]
+                    prev_cpr = daily_cpr.iloc[-2]
+                    if curr_cpr['Pivot'] > prev_cpr['Pivot']:
+                        bias = "BULLISH"
+                    elif curr_cpr['Pivot'] < prev_cpr['Pivot']:
+                        bias = "BEARISH"
+                    logging.info(f"Updated Bias for {ticker}: {bias}")
+                except:
+                    pass
+            
             intraday_df = add_rsi(intraday_df)
             intraday_df['Vol_SMA20'] = intraday_df['Volume'].rolling(20).mean()
             intraday_df['EMA20'] = intraday_df['Close'].ewm(span=20, adjust=False).mean()

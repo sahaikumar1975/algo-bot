@@ -28,7 +28,8 @@ NIFTY_50 = [
     "ADANIENT.NS", "ADANIPORTS.NS", "TATAMOTORS.NS", "WIPRO.NS", "COALINDIA.NS",
     "ONGC.NS", "BAJAJFINSV.NS", "GRASIM.NS", "TECHM.NS", "HDFCLIFE.NS",
     "BRITANNIA.NS", "HEROMOTOCO.NS", "INDUSINDBANK.NS", "CIPLA.NS", "DIVISLAB.NS",
-    "DRREDDY.NS", "UPL.NS", "SBILIFE.NS", "BAJAJ-AUTO.NS", "HINDALCO.NS"
+    "DRREDDY.NS", "UPL.NS", "SBILIFE.NS", "BAJAJ-AUTO.NS", "HINDALCO.NS",
+    "^NSEI", "^NSEBANK"  # Added Indices
 ]
 
 def download_with_retry(ticker, period, interval, retries=3):
@@ -165,8 +166,11 @@ def run_scanner():
         # Save to CSV
         df_res.to_csv("daily_scan_results.csv", index=False)
         print("\nResults saved to daily_scan_results.csv")
+        print("\nResults saved to daily_scan_results.csv")
+        return results # Return list of dicts for bot
     else:
         print("No results found.")
+        return []
 
 if __name__ == "__main__":
     run_scanner()
