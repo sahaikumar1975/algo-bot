@@ -88,9 +88,29 @@ class AIValidator:
                 'mode': result.get('mode', 'SNIPER') # Default to Sniper
             }
         except Exception as e:
-            logging.error(f"AI Validation Error: {e}")
-            # Fail safe: Allow trade but log warning
-            return {'valid': True, 'reason': f'AI Error ({str(e)}) - Defaulting to Valid', 'mode': 'SNIPER'}
+            error_msg = str(e)
+            logging.error(f"AI Validation Error: {error_msg}")
+            
+            if "429" in error_msg or "Resource has been exhausted" in error_msg:
+                 return {
+                     'valid': False, # FAIL SAFE: Do not trade if AI is down/throttled
+                     'reason': 'AI Rate Limit Exceeded (429)',
+                     'mode': 'SNIPER'
+                 }
+            
+            # CRITICAL AUTH ERRORS (400, 401, 403)
+            # 400: Bad Request (Expired Key)
+            # 401: Unauthorized
+            # 403: Forbidden
+            if "400" in error_msg or "401" in error_msg or "403" in error_msg or "API key expired" in error_msg:
+                return {
+                    'valid': False, # STRICT FAIL SAFE
+                    'reason': f'AI CRITICAL ERROR: {error_msg} - CHECK API KEY',
+                    'mode': 'SNIPER'
+                }
+            
+            # Fail safe: Allow trade but log warning (for other errors like timeouts or random 500s)
+            return {'valid': True, 'reason': f'AI Error ({error_msg}) - Defaulting to Valid', 'mode': 'SNIPER'}
 
 if __name__ == "__main__":
     # Test

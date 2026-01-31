@@ -142,6 +142,18 @@ def check_for_signals(watchlist):
         # Explicitly mention indices to reassure user
         indices_in_watch = [t['ticker'] for t in watchlist if t['ticker'].startswith('^')]
         logging.info(f"Checking signals for {len(watchlist)} stocks including {indices_in_watch}...")
+    
+    # Persistent AI Cooldown Tracker (Static-like via function attribute or passed in? 
+    # Function local dict won't work if function called repeatedly? 
+    # check_for_signals IS called repeatedly. We need to pass it or make it global.)
+    pass
+
+# Global Cooldown Tracker
+ai_cooldowns = {}
+
+def check_for_signals(watchlist):
+    """Check each stock in watchlist for entry signals."""
+    current_time = datetime.now()
 
     MAX_STOCK_TRADES = 5
     
@@ -187,6 +199,10 @@ def check_for_signals(watchlist):
                 banknifty_trades = len(today_trades[today_trades['Ticker'] == '^NSEBANK'])
         except Exception:
             pass
+    
+    # Ensure trades_today is initialized if log read fails or file doesn't exist
+    if 'trades_today' not in locals():
+        trades_today = 0
     
     # Load Dynamic Config
     config = load_config()
@@ -278,7 +294,8 @@ def check_for_signals(watchlist):
             
             # VWAP
             intraday_df['Cum_Vol'] = intraday_df.groupby(intraday_df.index.date)['Volume'].cumsum()
-            intraday_df['Cum_Vol_Price'] = intraday_df.groupby(intraday_df.index.date).apply(lambda x: (x['Close'] * x['Volume']).cumsum()).reset_index(level=0, drop=True)
+            intraday_df['Vol_Price'] = intraday_df['Close'] * intraday_df['Volume']
+            intraday_df['Cum_Vol_Price'] = intraday_df.groupby(intraday_df.index.date)['Vol_Price'].cumsum()
             intraday_df['VWAP'] = intraday_df['Cum_Vol_Price'] / intraday_df['Cum_Vol']
             
             # --- EXIT LOGIC ---
@@ -398,9 +415,22 @@ def check_for_signals(watchlist):
                     "Lower_CPR": lower_cpr
                 }
                 
+                # AI COOLDOWN CHECK
+                current_timestamp = time.time()
+                last_ai_check = ai_cooldowns.get(ticker, 0)
+                
+                # Cooldown period: 5 minutes (300 seconds)
+                # If we checked recently (and presumably got rejected or traded), don't check again immediately.
+                if current_timestamp - last_ai_check < 300:
+                    logging.info(f"⏳ COOLDOWN: Skipping AI check for {ticker} (Last check {int(current_timestamp - last_ai_check)}s ago)")
+                    continue
+
                 # Verify with AI
                 validator = AIValidator() # Reads env var
                 ai_decision = validator.validate_trade(ticker, signal, price, technicals)
+                
+                # Update Cooldown Timestamp
+                ai_cooldowns[ticker] = current_timestamp
                 
                 if ai_decision['valid']:
                     # Get Strategy Mode
@@ -589,7 +619,20 @@ def main():
     
     try:
         while True:
-            # Check market hours (optional, omitted for testing capability)
+            # Check market hours
+            now = datetime.now()
+            start_time = now.replace(hour=9, minute=15, second=0, microsecond=0)
+            end_time = now.replace(hour=15, minute=30, second=0, microsecond=0)
+            
+            # Allow pre-market scan/init but block loop execution
+            # Actually, to prevent "Off Market" trades completely, we shout wait.
+            if now < start_time or now > end_time:
+                # Sleep to avoid spamming logs (every 1 min)
+                if now.second < 5: 
+                    logging.info(f"Market Closed. Waiting for 09:15 - 15:30... (Current: {now.strftime('%H:%M:%S')})")
+                time.sleep(5)
+                continue
+
             check_for_signals(watchlist)
             
             # Sleep 5 seconds for faster reaction

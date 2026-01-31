@@ -67,28 +67,29 @@ def scan_stock(ticker):
         if isinstance(daily_df.columns, pd.MultiIndex):
             daily_df.columns = daily_df.columns.get_level_values(0)
             
-        # 2. Calculate CPR
-        daily_cpr = calculate_cpr(daily_df)
+        # 2. Calculate CPR (Live Mode)
+        # We need CPR for TODAY (based on Yesterday's Data)
+        # daily_df.iloc[-1] is Yesterday (if pre-market)
         
-        # Get Today's and Yesterday's CPR
-        # daily_cpr index is the DATE the CPR is valid for
-        # If running today (Live), we need CPR for Today.
-        # Check last available index
-        today_date = daily_cpr.index[-1].date()
+        last_candle = daily_df.iloc[-1]
+        prev_candle = daily_df.iloc[-2]
         
-        current_cpr = daily_cpr.iloc[-1]
-        prev_cpr = daily_cpr.iloc[-2] # Previous day's CPR
+        # Calculate PIVOT for TODAY (Using Last Candle)
+        pivot = (last_candle['High'] + last_candle['Low'] + last_candle['Close']) / 3
+        bc = (last_candle['High'] + last_candle['Low']) / 2
+        tc = (pivot - bc) + pivot
+        
+        # Calculate PIVOT for YESTERDAY (Using Prev Candle)
+        prev_pivot_val = (prev_candle['High'] + prev_candle['Low'] + prev_candle['Close']) / 3
         
         # 3. Analyze Trend (Bias)
-        pivot = current_cpr['Pivot']
-        prev_pivot = prev_cpr['Pivot']
-        
+        # Compare Today's Pivot vs Yesterday's Pivot
         trend = "NEUTRAL"
-        if pivot > prev_pivot: trend = "BULLISH"
-        elif pivot < prev_pivot: trend = "BEARISH"
+        if pivot > prev_pivot_val: trend = "BULLISH"
+        elif pivot < prev_pivot_val: trend = "BEARISH"
         
         # 4. Narrow CPR Check
-        cpr_width = abs(current_cpr['TC'] - current_cpr['BC'])
+        cpr_width = abs(tc - bc)
         is_narrow = cpr_width < (pivot * 0.005) # 0.5% Width
         
         # 5. Fetch Intraday Data (Current state)
