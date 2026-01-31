@@ -19,4 +19,5 @@ if ! command -v python3 &> /dev/null; then
 fi
 
 # Run Streamlit App
-streamlit run app.py
+# Run Streamlit App (Mobile Access Enabled)
+streamlit run app.py --server.address 0.0.0.0

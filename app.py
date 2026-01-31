@@ -22,6 +22,20 @@ from dotenv import load_dotenv
 import yfinance as yf
 from fyers_integration import FyersApp
 import json
+import socket
+
+def get_local_ip():
+    """Detect local LAN IP address."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # doesn't even have to be reachable
+        s.connect(('10.255.255.255', 1))
+        IP = s.getsockname()[0]
+    except Exception:
+        IP = '127.0.0.1'
+    finally:
+        s.close()
+    return IP
 
 # Load environment variables
 load_dotenv()
@@ -211,6 +225,19 @@ with st.sidebar.expander("🔐 Fyers Live Login", expanded=False):
             st.warning("⚠️ REAL MONEY MODE ON")
         else:
             st.session_state['live_trading_active'] = False
+
+    # Mobile Connect
+    st.sidebar.markdown("---")
+    with st.sidebar.expander("📱 Connect Mobile", expanded=False):
+        try:
+            local_ip = get_local_ip()
+            port = "8501"
+            url = f"http://{local_ip}:{port}"
+            st.info(f"Using same Wi-Fi, open:")
+            st.code(url, language="text")
+            st.caption("Control this bot from your phone!")
+        except:
+            st.error("Could not detect IP")
 
 st.sidebar.divider()
 

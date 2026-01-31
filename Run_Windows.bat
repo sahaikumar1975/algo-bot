@@ -16,7 +16,7 @@ IF %ERRORLEVEL% NEQ 0 (
     EXIT /B
 )
 
-:: Run Streamlit App
-streamlit run app.py
+:: Run Streamlit App (Mobile Access Enabled)
+streamlit run app.py --server.address 0.0.0.0
 
 PAUSE
