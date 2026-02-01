@@ -77,14 +77,36 @@ BANKNIFTY_LOT_SIZE = 30
 MAX_NIFTY_TRADES = 2
 MAX_BANKNIFTY_TRADES = 2
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILE, mode='w'),
-        logging.StreamHandler()
-    ]
-)
+# Setup Logging
+# Use absolute path to ensure matching with app.py expectation
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_FILE = os.path.join(BASE_DIR, "bot.log")
+TRADE_LOG = os.path.join(BASE_DIR, "trade_log.csv")
+
+# Force Logger Configuration (basicConfig handles are often ignored if valid handlers exist)
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.DEBUG)
+
+# Clear existing handlers to prevent duplicates or silent failures
+if root_logger.hasHandlers():
+    root_logger.handlers.clear()
+
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+# File Handler
+file_handler = logging.FileHandler(LOG_FILE, mode='w')
+file_handler.setFormatter(formatter)
+root_logger.addHandler(file_handler)
+
+# Stream Handler
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(formatter)
+root_logger.addHandler(stream_handler)
+
+# Suppress Noisy Libraries
+logging.getLogger("yfinance").setLevel(logging.WARNING)
+logging.getLogger("peewee").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 def get_atm_strike(price, ticker):
     """Calculate ATM Strike Price."""
@@ -324,6 +346,13 @@ def check_for_signals(watchlist):
             intraday_df['Cum_Vol_Price'] = intraday_df.groupby(intraday_df.index.date)['Vol_Price'].cumsum()
             intraday_df['VWAP'] = intraday_df['Cum_Vol_Price'] / intraday_df['Cum_Vol']
             
+            # FIX: For Indices (Volume=0), VWAP is NaN. Use EMA20 as proxy.
+            if ticker.startswith('^'):
+                intraday_df['VWAP'] = intraday_df['EMA20']
+                # Also Mock Volume for Vol check
+                intraday_df['Volume'] = 100000 
+                intraday_df['Vol_SMA20'] = 10000
+            
             # --- EXIT LOGIC ---
             # Check if this stock has an OPEN trade
             current_price = intraday_df.iloc[-1]['Close']
@@ -413,7 +442,13 @@ def check_for_signals(watchlist):
                             signal = "LONG"
                             stop_loss = price - (atr * 1.5)
                             target = price + (atr * 3) # 1:2 RR
-                            
+                        else:
+                            logging.debug(f"Skip {ticker} LONG: Vol {curr['Volume']} < Avg {curr['Vol_SMA20']}")
+                    else:
+                        logging.debug(f"Skip {ticker} LONG: No Breakout/RSI Cross (RSI: {curr['RSI']:.1f})")
+                else:
+                    logging.debug(f"Skip {ticker} LONG: Price {price:.1f} <= VWAP {curr['VWAP']:.1f}")
+
             elif bias == "BEARISH":
                 # Short Setup: Price < VWAP
                 if price < curr['VWAP']:
@@ -425,6 +460,12 @@ def check_for_signals(watchlist):
                             signal = "SHORT"
                             stop_loss = price + (atr * 1.5)
                             target = price - (atr * 3) # 1:2 RR
+                        else:
+                             logging.debug(f"Skip {ticker} SHORT: Vol {curr['Volume']} < Avg {curr['Vol_SMA20']}")
+                    else:
+                         logging.debug(f"Skip {ticker} SHORT: No Breakdown/RSI Cross (RSI: {curr['RSI']:.1f})")
+                else:
+                    logging.debug(f"Skip {ticker} SHORT: Price {price:.1f} >= VWAP {curr['VWAP']:.1f}")
                             
             if signal:
                 # Prepare Technical Data for AI

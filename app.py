@@ -647,7 +647,9 @@ def main():
                         st.info("Bot Starting in PAPER TRADING MODE")
 
                     # Start in background
-                    subprocess.Popen(["python3", "live_bot.py"], env=env)
+                    # Start in background with Error Logging
+                    with open("bot_startup_error.log", "w") as err_log:
+                        subprocess.Popen(["python3", "live_bot.py"], env=env, stderr=err_log, stdout=err_log)
                     st.success("Bot started.")
                     time.sleep(1)
                     st.rerun()
