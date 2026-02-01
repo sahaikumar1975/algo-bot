@@ -686,6 +686,22 @@ def main():
         else:
             st.info("Market Scan not yet run today.")
 
+        # --- Stocks Under Scanner ---
+        st.subheader("📋 Stocks Under Scanner")
+        if os.path.exists("daily_scan_results.csv"):
+            try:
+                res_df = pd.read_csv("daily_scan_results.csv")
+                # Filter out indices for this view
+                stocks_only = res_df[~res_df['Ticker'].str.startswith('^')]
+                
+                if not stocks_only.empty:
+                    st.caption(f"Found {len(stocks_only)} stocks matching criteria.")
+                    st.dataframe(stocks_only, use_container_width=True)
+                else:
+                    st.info("No stocks matched the scanner criteria today.")
+            except Exception as e:
+                st.error(f"Error reading scanner results: {e}")
+
         # --- Risk Management Section ---
         with st.expander("💰 Risk & Fund Management", expanded=False):
             config = load_config()
@@ -748,6 +764,13 @@ def main():
         st.subheader("📊 Trade Log")
         if os.path.exists("trade_log.csv"):
             trades_df = pd.read_csv("trade_log.csv")
+            
+            # Filter for TODAY
+            if 'Time' in trades_df.columns:
+                trades_df['Time'] = pd.to_datetime(trades_df['Time'])
+                today = datetime.now().date()
+                trades_df = trades_df[trades_df['Time'].dt.date == today]
+                
             st.dataframe(trades_df)
         else:
             st.info("No trades executed yet.")

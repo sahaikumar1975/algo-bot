@@ -81,7 +81,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(LOG_FILE),
+        logging.FileHandler(LOG_FILE, mode='w'),
         logging.StreamHandler()
     ]
 )
@@ -95,43 +95,69 @@ def get_atm_strike(price, ticker):
 def get_watchlist():
     """Run initial scan to find 'Stocks in Play'."""
     logging.info("Running Daily Pre-Market Scan...")
-    watchlist = []
     
     watchlist = []
+    all_scan_results = [] # Store all results for UI display
     
     # Always check Indices first
     indices = ['^NSEI', '^NSEBANK']
     for ticker in indices:
         try:
              res = scan_stock(ticker)
-             if res: # Indices don't need Narrow CPR strictly, just Trend
+             if res: 
+                 # Indices don't need Narrow CPR strictly, just Trend
+                 # We keep full res for the UI CSV
+                 all_scan_results.append(res)
                  watchlist.append({'ticker': ticker, 'trend': res['Trend']})
              else:
                  # Force add if scan fails, assuming NEUTRAL/Wait logic will handle it in main loop
-                 # Better to have it and fail check_signals than miss it entirely
                  logging.warning(f"Index {ticker} initial scan failed, adding with default Neutral bias.")
+                 default_res = {'Ticker': ticker, 'Trend': 'NEUTRAL', 'Narrow_CPR': False, 'Price': 0, 'VWAP': 0, 'Status': 'Data Error'}
+                 all_scan_results.append(default_res)
                  watchlist.append({'ticker': ticker, 'trend': 'NEUTRAL'})
                  
         except Exception as e:
              logging.error(f"Error scanning index {ticker}: {e}. Forcing add.")
+             default_res = {'Ticker': ticker, 'Trend': 'NEUTRAL', 'Narrow_CPR': False, 'Price': 0, 'VWAP': 0, 'Status': 'Scan Error'}
+             all_scan_results.append(default_res)
              watchlist.append({'ticker': ticker, 'trend': 'NEUTRAL'})
 
-    # Simple scan (not threaded here to avoid complexity in bot loop)
+    # Scan Stocks
     for ticker in NIFTY_50:
         try:
-            # We use the scan_stock logic but just need Trend/Narrow status
-            # scan_stock returns dict if successful
             res = scan_stock(ticker)
-            if res and res['Narrow_CPR']:
-                # ONLY Trade Narrow CPR days for high probability
-                watchlist.append({
-                    'ticker': ticker,
-                    'trend': res['Trend'] # BULLISH or BEARISH
-                })
+            if res:
+                # Add to detailed results for CSV (even if not in watchlist, optional: decide if we want ALL or just Watchlist)
+                # User asked "how many stocks are under its scanner for trading". 
+                # Ideally, we show what made the cut.
+                
+                if res['Narrow_CPR']:
+                    # ONLY Trade Narrow CPR days for high probability
+                    watchlist.append({
+                        'ticker': ticker,
+                        'trend': res['Trend'] # BULLISH or BEARISH
+                    })
+                    all_scan_results.append(res) # Only add to CSV if it fits criterion? Or all? 
+                    # Usually "Scanner" implies what is being watched. Let's save what is in watchlist + indices.
+            
         except Exception as e:
             logging.error(f"Error scanning stock {ticker}: {e}")
             continue
             
+    # Save to CSV for Dashboard (app.py reads this)
+    try:
+        if all_scan_results:
+            df_res = pd.DataFrame(all_scan_results)
+            # Ensure columns match what app.py expects / standard format
+            # Standard: Ticker, Trend, Narrow_CPR, Price, VWAP, Status
+            df_res.to_csv("daily_scan_results.csv", index=False)
+            logging.info(f"Saved {len(df_res)} stocks to daily_scan_results.csv for Dashboard.")
+        else:
+            # Create empty with headers if nothing found
+            pd.DataFrame(columns=['Ticker', 'Trend', 'Narrow_CPR', 'Price', 'VWAP', 'Status']).to_csv("daily_scan_results.csv", index=False)
+    except Exception as e:
+        logging.error(f"Failed to save daily_scan_results.csv: {e}")
+
     logging.info(f"Watchlist created: {len(watchlist)} stocks found.")
     return watchlist
 
