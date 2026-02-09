@@ -3,9 +3,9 @@ Live Trading Bot
 ----------------
 This script runs continuously during market hours.
 It:
-1. Filters Nifty 50 stocks for 'Day Trading' Setups (CPR Trend + Narrow CPR)
-2. Monitors them on 5-minute timeframe.
-3. Logs 'Paper Trades' when signals occur.
+1. Monitors Indices (^NSEI, ^NSEBANK) for 3-Candle 9EMA Strategy (Options).
+2. Monitors Nifty 50 Stocks for CPR + RSI + VWAP Strategy (Equity Intraday).
+3. Uses ADX to switch between SNIPER (Target Based) and SURFER (Trailing Exit) modes.
 """
 
 import time
@@ -13,37 +13,13 @@ import logging
 import pandas as pd
 from datetime import datetime
 import os
+import json
 from market_scanner import scan_stock, NIFTY_50
-from day_trading_strategy import fetch_data, add_rsi, calculate_cpr
+from day_trading_strategy import fetch_data, add_rsi, calculate_9ema, check_3_candle_setup, check_stock_signal, calculate_cpr, calculate_vwap, calculate_adx, detect_market_regime
 from ai_validator import AIValidator
 from fyers_integration import FyersApp
 from option_util import get_fyers_symbol
-
-# Setup Logging
-LOG_FILE = "bot.log"
-TRADE_LOG = "trade_log.csv"
-TRADE_COLUMNS = ['Time', 'Ticker', 'Signal', 'Entry_Price', 'Qty', 'SL', 'Target', 'Notes', 'Exit_Time', 'Exit_Price', 'Exit_Reason', 'PnL', 'Status']
-CONFIG_FILE = "bot_config.json"
-
-def load_config():
-    """Load risk config from JSON."""
-    try:
-        with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
-    except:
-        # Defaults
-        return {
-            "MAX_DAILY_TRADES": 9,
-            "MAX_STOCK_TRADES": 5,
-            "MAX_NIFTY_TRADES": 2,
-            "MAX_BANKNIFTY_TRADES": 2,
-            "CAPITAL": 100000,
-            "ALLOCATION_PER_TRADE": 10000,
-            "RISK_PER_TRADE_PERCENT": 1.0,
-            "MAX_DAILY_LOSS_PERCENT": 2.0
-        }
-
-
+import re
 
 # Broker Init
 FYERS_TOKEN = os.environ.get("FYERS_TOKEN")
@@ -59,656 +35,472 @@ if LIVE_TRADE:
     except Exception as e:
         logging.error(f"Broker Connect Failed: {e}")
         LIVE_TRADE = False
-LOG_FILE = "bot.log"
-TRADE_LOG = "trade_log.csv"
-
-# Risk Management Config
-INITIAL_CAPITAL = 100000 # Total Account Capital (Reference)
-FIXED_CAPITAL_PER_TRADE = 10000 # Max allocation per stock trade
-MAX_TRADES_PER_DAY = 5
-RISK_PER_TRADE = 0.01  # 1% (SL distance)
-MAX_DAILY_LOSS = 0.02  # 2%
-
-# Index Lot Sizes (Fixed 1 Lot)
-NIFTY_LOT_SIZE = 65
-BANKNIFTY_LOT_SIZE = 30
-
-# Specific Index Limits
-MAX_NIFTY_TRADES = 2
-MAX_BANKNIFTY_TRADES = 2
 
 # Setup Logging
-# Use absolute path to ensure matching with app.py expectation
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(BASE_DIR, "bot.log")
 TRADE_LOG = os.path.join(BASE_DIR, "trade_log.csv")
+CONFIG_FILE = os.path.join(BASE_DIR, "bot_config.json")
+TRADE_COLUMNS = ['Time', 'Ticker', 'Instrument', 'Signal', 'Entry_Price', 'Qty', 'SL', 'Target', 'Notes', 'Exit_Time', 'Exit_Price', 'Exit_Reason', 'PnL', 'Status', 'Regime']
 
-# Force Logger Configuration (basicConfig handles are often ignored if valid handlers exist)
-root_logger = logging.getLogger()
-root_logger.setLevel(logging.DEBUG)
+# Config
+def load_config():
+    """Load risk config from JSON."""
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            return json.load(f)
+    except:
+        return {
+            "MAX_DAILY_TRADES": 9,
+            "MAX_STOCK_TRADES": 5, 
+            "MAX_NIFTY_TRADES": 2,
+            "MAX_BANKNIFTY_TRADES": 2,
+            "CAPITAL": 100000,
+            "ALLOCATION_PER_TRADE": 10000,
+            "RISK_PER_TRADE_PERCENT": 1.0,
+            "MAX_DAILY_LOSS_PERCENT": 2.0
+        }
 
-# Clear existing handlers to prevent duplicates or silent failures
-if root_logger.hasHandlers():
-    root_logger.handlers.clear()
+# Logger
+# Configure Logging - Reduce Noise
+# Force Root Logger to INFO
+logging.getLogger().setLevel(logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# NUCLEAR OPTION: Silence all existing loggers from imported libraries
+# fyers_apiv3 likely sets up its own logger with DEBUG
+for logger_name in logging.Logger.manager.loggerDict:
+    if logger_name not in ["root"]: # Keep root
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-
-# File Handler
 file_handler = logging.FileHandler(LOG_FILE, mode='w')
 file_handler.setFormatter(formatter)
+root_logger = logging.getLogger()
 root_logger.addHandler(file_handler)
-
-# Stream Handler
 stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(formatter)
 root_logger.addHandler(stream_handler)
-
-# Suppress Noisy Libraries
-logging.getLogger("yfinance").setLevel(logging.WARNING)
-logging.getLogger("peewee").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-def get_atm_strike(price, ticker):
-    """Calculate ATM Strike Price."""
-    if 'BANK' in ticker.upper():
-        return int(round(price / 100) * 100)
-    return int(round(price / 50) * 50)
-
-def get_watchlist():
-    """Run initial scan to find 'Stocks in Play'."""
-    logging.info("Running Daily Pre-Market Scan...")
-    
-    watchlist = []
-    all_scan_results = [] # Store all results for UI display
-    
-    # Always check Indices first
-    indices = ['^NSEI', '^NSEBANK']
-    for ticker in indices:
-        try:
-             res = scan_stock(ticker)
-             if res: 
-                 # Indices don't need Narrow CPR strictly, just Trend
-                 # We keep full res for the UI CSV
-                 all_scan_results.append(res)
-                 watchlist.append({'ticker': ticker, 'trend': res['Trend']})
-             else:
-                 # Force add if scan fails, assuming NEUTRAL/Wait logic will handle it in main loop
-                 logging.warning(f"Index {ticker} initial scan failed, adding with default Neutral bias.")
-                 default_res = {'Ticker': ticker, 'Trend': 'NEUTRAL', 'Narrow_CPR': False, 'Price': 0, 'VWAP': 0, 'Status': 'Data Error'}
-                 all_scan_results.append(default_res)
-                 watchlist.append({'ticker': ticker, 'trend': 'NEUTRAL'})
-                 
-        except Exception as e:
-             logging.error(f"Error scanning index {ticker}: {e}. Forcing add.")
-             default_res = {'Ticker': ticker, 'Trend': 'NEUTRAL', 'Narrow_CPR': False, 'Price': 0, 'VWAP': 0, 'Status': 'Scan Error'}
-             all_scan_results.append(default_res)
-             watchlist.append({'ticker': ticker, 'trend': 'NEUTRAL'})
-
-    # Scan Stocks
-    for ticker in NIFTY_50:
-        try:
-            res = scan_stock(ticker)
-            if res:
-                # Add to detailed results for CSV (even if not in watchlist, optional: decide if we want ALL or just Watchlist)
-                # User asked "how many stocks are under its scanner for trading". 
-                # Ideally, we show what made the cut.
-                
-                if res['Narrow_CPR']:
-                    # ONLY Trade Narrow CPR days for high probability
-                    watchlist.append({
-                        'ticker': ticker,
-                        'trend': res['Trend'] # BULLISH or BEARISH
-                    })
-                    all_scan_results.append(res) # Only add to CSV if it fits criterion? Or all? 
-                    # Usually "Scanner" implies what is being watched. Let's save what is in watchlist + indices.
-            
-        except Exception as e:
-            logging.error(f"Error scanning stock {ticker}: {e}")
-            continue
-            
-    # Save to CSV for Dashboard (app.py reads this)
-    try:
-        if all_scan_results:
-            df_res = pd.DataFrame(all_scan_results)
-            # Ensure columns match what app.py expects / standard format
-            # Standard: Ticker, Trend, Narrow_CPR, Price, VWAP, Status
-            df_res.to_csv("daily_scan_results.csv", index=False)
-            logging.info(f"Saved {len(df_res)} stocks to daily_scan_results.csv for Dashboard.")
-        else:
-            # Create empty with headers if nothing found
-            pd.DataFrame(columns=['Ticker', 'Trend', 'Narrow_CPR', 'Price', 'VWAP', 'Status']).to_csv("daily_scan_results.csv", index=False)
-    except Exception as e:
-        logging.error(f"Failed to save daily_scan_results.csv: {e}")
-
-    logging.info(f"Watchlist created: {len(watchlist)} stocks found.")
-    return watchlist
-
-def check_for_signals(watchlist):
-    """Check each stock in watchlist for entry signals."""
-    current_time = datetime.now()
-    if current_time.second < 10: # Log only once per minute
-        # Explicitly mention indices to reassure user
-        indices_in_watch = [t['ticker'] for t in watchlist if t['ticker'].startswith('^')]
-        logging.info(f"Checking signals for {len(watchlist)} stocks including {indices_in_watch}...")
-    
-    # Persistent AI Cooldown Tracker (Static-like via function attribute or passed in? 
-    # Function local dict won't work if function called repeatedly? 
-    # check_for_signals IS called repeatedly. We need to pass it or make it global.)
-    pass
-
-# Global Cooldown Tracker
+# Globals
 ai_cooldowns = {}
 
-def check_for_signals(watchlist):
-    """Check each stock in watchlist for entry signals."""
-    current_time = datetime.now()
+def get_strike_for_trade(price, ticker, otype, depth=2):
+    """Calculate ITM Strike Price for Higher Delta."""
+    step = 100 if 'BANK' in ticker.upper() else 50
+    atm = int(round(price / step) * step)
+    if otype == "CE": return atm - (step * depth)
+    else: return atm + (step * depth)
 
-    MAX_STOCK_TRADES = 5
+def get_watchlist():
+    """Build Watchlist: Indices + Nifty 50 Stocks."""
+    logging.info("Building Daily Watchlist...")
+    watchlist = []
+    indices = ['^NSEI', '^NSEBANK']
+    for ticker in indices: watchlist.append({'ticker': ticker, 'type': 'INDEX'})
+    # Filter out indices from NIFTY_50 list as they are already added
+    stock_list = [t for t in NIFTY_50 if t not in indices]
+    for ticker in stock_list: watchlist.append({'ticker': ticker, 'type': 'STOCK'})
+    logging.info(f"Watchlist: 2 Indices + {len(stock_list)} Stocks.")
+    return watchlist
+
+def check_for_signals(watchlist, config):
+    """Check Signals for both Strategies."""
+    current_time = datetime.now()
     
-    # Load or Create Log
+    # Initialize Log if missing
     if not os.path.exists(TRADE_LOG):
         pd.DataFrame(columns=TRADE_COLUMNS).to_csv(TRADE_LOG, index=False)
     
-    try:
-        df_log = pd.read_csv(TRADE_LOG)
-        # Ensure all columns exist (start of day migration)
-        for col in TRADE_COLUMNS:
-            if col not in df_log.columns: df_log[col] = None
-    except:
-        df_log = pd.DataFrame(columns=TRADE_COLUMNS)
-
-    # 1. Check Open Trades for Exits
-    # Filter 'OPEN' status
-    if not df_log.empty and 'Status' in df_log.columns:
-        open_trades = df_log[df_log['Status'] == 'OPEN']
-        
-        # We can only check exits for stocks we have data for.
-        # Luckily we iterate watchlist below. 
-        # But we must check Exits BEFORE New Entries for the same stock (to free up cool-down?)
-        # Actually cool-down prevents re-entry, but we want to close first.
-        
-        # Optimization: We loop watchlist anyway. Let's handle entries/exits per stock.
-        pass
-    
-    today_trades = 0
-    nifty_trades = 0
-    banknifty_trades = 0
-    
-    if os.path.exists(TRADE_LOG):
-        try:
-            df_log = pd.read_csv(TRADE_LOG)
-            if not df_log.empty and 'Time' in df_log.columns:
-                df_log['Time'] = pd.to_datetime(df_log['Time'])
-                today_trades = df_log[df_log['Time'].dt.date == datetime.now().date()]
-                trades_today = len(today_trades)
-                
-                # Count Specifics
-                nifty_trades = len(today_trades[today_trades['Ticker'] == '^NSEI'])
-                banknifty_trades = len(today_trades[today_trades['Ticker'] == '^NSEBANK'])
-        except Exception:
-            pass
-    
-    # Ensure trades_today is initialized if log read fails or file doesn't exist
-    if 'trades_today' not in locals():
-        trades_today = 0
-    
-    # Load Dynamic Config
     config = load_config()
     MAX_STOCK_TRADES = config.get('MAX_STOCK_TRADES', 5)
     MAX_NIFTY_TRADES = config.get('MAX_NIFTY_TRADES', 2)
     MAX_BANKNIFTY_TRADES = config.get('MAX_BANKNIFTY_TRADES', 2)
     ALLOCATION = config.get('ALLOCATION_PER_TRADE', 10000)
     RISK_PCT = config.get('RISK_PER_TRADE_PERCENT', 1.0) / 100.0
-
-    # Calculate Stock Trades
-    stock_trades = trades_today - nifty_trades - banknifty_trades
     
-    # Global cap removed in favor of segmented caps
-    # but we can log status
+    nifty_trades = 0
+    banknifty_trades = 0
+    stock_trades = 0
+    
+    df_log = pd.DataFrame()
+    try:
+        df_log = pd.read_csv(TRADE_LOG)
+        if not df_log.empty and 'Time' in df_log.columns:
+            df_log['Time'] = pd.to_datetime(df_log['Time'])
+            tod = df_log[df_log['Time'].dt.date == current_time.date()]
+            nifty_trades = len(tod[tod['Ticker'] == '^NSEI'])
+            banknifty_trades = len(tod[tod['Ticker'] == '^NSEBANK'])
+            
+            # Count Stock Trades (Anything NOT Index)
+            stock_trades = len(tod[~tod['Ticker'].isin(['^NSEI', '^NSEBANK'])])
+    except: pass
+
     if current_time.second < 10:
-        logging.info(f"Stats: Stocks {stock_trades}/{MAX_STOCK_TRADES}, Nifty {nifty_trades}/{MAX_NIFTY_TRADES}, BankNifty {banknifty_trades}/{MAX_BANKNIFTY_TRADES}")
+        logging.info(f"Stats: Nifty {nifty_trades}, BankNifty {banknifty_trades}, Stocks {stock_trades}/{MAX_STOCK_TRADES}")
+
+    logging.info(f"🔎 Scanning {len(watchlist)} tickers...")
+    scan_count = 0
 
     for item in watchlist:
+        scan_count += 1
+        if scan_count % 10 == 0: logging.info(f"...scanned {scan_count}/{len(watchlist)}")
+
         ticker = item['ticker']
+        is_index = item['type'] == 'INDEX'
         
-        # Check Limits based on category
-        if ticker == '^NSEI':
-            if nifty_trades >= MAX_NIFTY_TRADES: continue
-        elif ticker == '^NSEBANK':
-            if banknifty_trades >= MAX_BANKNIFTY_TRADES: continue
-        else:
-            # It's a stock
-            if stock_trades >= MAX_STOCK_TRADES: continue
-        last_trade_time = None
-        if os.path.exists(TRADE_LOG):
-             try:
-                 df_log = pd.read_csv(TRADE_LOG)
-                 if not df_log.empty and 'Time' in df_log.columns:
-                     df_log['Time'] = pd.to_datetime(df_log['Time'])
-                     # Filter for this ticker today
-                     today_trades = df_log[df_log['Time'].dt.date == datetime.now().date()]
-                     ticker_trades = today_trades[today_trades['Ticker'] == ticker]
-                     if not ticker_trades.empty:
-                         last_trade_time = ticker_trades.iloc[-1]['Time']
-             except Exception:
-                 pass
-        
-        if last_trade_time:
-            time_diff = (datetime.now() - last_trade_time).total_seconds() / 60
-            if time_diff < 30: # 30 Minute Cool-down
-                continue
-        
-        # Specific Index Limits Check
-        if ticker == '^NSEI' and nifty_trades >= MAX_NIFTY_TRADES:
-            continue # Skip Nifty if limit reached
-        if ticker == '^NSEBANK' and banknifty_trades >= MAX_BANKNIFTY_TRADES:
-            continue # Skip BankNifty if limit reached
-        bias = item['trend']
+        # Trade Limits
+        if ticker == '^NSEI' and nifty_trades >= MAX_NIFTY_TRADES: continue
+        if ticker == '^NSEBANK' and banknifty_trades >= MAX_BANKNIFTY_TRADES: continue
+        if not is_index and stock_trades >= MAX_STOCK_TRADES: continue
         
         try:
-            # Fetch Data (fast fetch)
-            # We need Daily for CPR (already have bias but need levels)
-            # We need Intraday
-            daily_df, intraday_df = fetch_data(ticker)
+            daily_df, intraday_df = fetch_data(ticker, broker=broker)
+            if intraday_df.empty or len(intraday_df) < 50: continue # Need history for ADX
             
-            if intraday_df.empty or len(intraday_df) < 20: continue
+            # --- STRATEGY & REGIME ---
+            regime = "SNIPER" # Default
             
-            # Indicators
-            daily_cpr = calculate_cpr(daily_df)
-            
-            # DYNAMIC BIAS CHECK: If Neutral (e.g. scan failed), recalc from daily data
-            if bias == "NEUTRAL":
-                try:
-                    curr_cpr = daily_cpr.iloc[-1]
-                    prev_cpr = daily_cpr.iloc[-2]
-                    if curr_cpr['Pivot'] > prev_cpr['Pivot']:
-                        bias = "BULLISH"
-                    elif curr_cpr['Pivot'] < prev_cpr['Pivot']:
-                        bias = "BEARISH"
-                    logging.info(f"Updated Bias for {ticker}: {bias}")
-                except:
-                    pass
-            
-            intraday_df = add_rsi(intraday_df)
-            intraday_df['Vol_SMA20'] = intraday_df['Volume'].rolling(20).mean()
-            intraday_df['EMA20'] = intraday_df['Close'].ewm(span=20, adjust=False).mean()
-            
-            # ATR for Stop Loss
-            high_low = intraday_df['High'] - intraday_df['Low']
-            high_close = (intraday_df['High'] - intraday_df['Close'].shift()).abs()
-            low_close = (intraday_df['Low'] - intraday_df['Close'].shift()).abs()
-            tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-            intraday_df['ATR'] = tr.rolling(14).mean()
-            
-            # VWAP
-            intraday_df['Cum_Vol'] = intraday_df.groupby(intraday_df.index.date)['Volume'].cumsum()
-            intraday_df['Vol_Price'] = intraday_df['Close'] * intraday_df['Volume']
-            intraday_df['Cum_Vol_Price'] = intraday_df.groupby(intraday_df.index.date)['Vol_Price'].cumsum()
-            intraday_df['VWAP'] = intraday_df['Cum_Vol_Price'] / intraday_df['Cum_Vol']
-            
-            # FIX: For Indices (Volume=0), VWAP is NaN. Use EMA20 as proxy.
-            if ticker.startswith('^'):
-                intraday_df['VWAP'] = intraday_df['EMA20']
-                # Also Mock Volume for Vol check
-                intraday_df['Volume'] = 100000 
-                intraday_df['Vol_SMA20'] = 10000
-            
-            # --- EXIT LOGIC ---
-            # Check if this stock has an OPEN trade
-            current_price = intraday_df.iloc[-1]['Close']
-            
-            if not df_log.empty:
-                # Find open trades for this ticker
-                open_pos = df_log[(df_log['Ticker'] == ticker) & (df_log['Status'] == 'OPEN')]
+            if is_index:
+                # === INDICES (9EMA) ===
+                intraday_df = calculate_9ema(intraday_df)
+                intraday_df = calculate_adx(intraday_df)
+                regime = detect_market_regime(intraday_df)
                 
-                for idx, trade in open_pos.iterrows():
-                    entry_price = trade['Entry_Price']
-                    sl = trade['SL']
-                    target_val = trade['Target'] # Could be string "TRAIL..."
-                    signal_type = trade['Signal']
-                    qty = trade['Qty']
+                if len(intraday_df) >= 4:
+                    # Index: Cluster SL + 5 pts buffer
+                    signal_data = check_3_candle_setup(intraday_df.iloc[-4:], sl_method='CLUSTER', limit_buffer=5.0)
+                    strategy_name = f"3-Candle 9EMA ({regime})"
                     
-                    exit_reason = None
-                    
-                    # 1. Stop Loss Check
-                    if "LONG" in signal_type and current_price <= sl:
-                        exit_reason = "SL HIT"
-                    elif "SHORT" in signal_type and current_price >= sl:
-                        exit_reason = "SL HIT"
-                        
-                    # 2. Target Check (Fixed)
+                current_price = intraday_df.iloc[-1]['Close']
+                ema = intraday_df.iloc[-1]['EMA9']
+            else:
+                # === STOCKS (Switch to 9EMA Strict) ===
+                # Compute 9EMA for Stock
+                intraday_df = calculate_9ema(intraday_df)
+                
+                # Use same logic as Index (Strict 3-Candle)
+                if len(intraday_df) >= 4:
+                    # Stock: Reference Candle High/Low SL + 0 buffer (User Request)
+                    signal_data = check_3_candle_setup(intraday_df.iloc[-4:], sl_method='REF', limit_buffer=0.0)
+                    strategy_name = "Stock 9EMA (Strict)"
+                    regime = "SNIPER" # Default to Sniper for stocks
+                
+                current_price = intraday_df.iloc[-1]['Close']
+                ema = intraday_df.iloc[-1]['EMA9']
+
+            if signal_data:
+                # Deduplication Logic: Check if we already traded this Signal Time
+                # We need to load full log now (df_log is available from earlier)
+                signal_time = signal_data.get('Time')
+                if signal_time:
+                    # Convert to pd.Timestamp for comparison
                     try:
-                        tgt_price = float(target_val)
-                        if "LONG" in signal_type and current_price >= tgt_price:
-                            exit_reason = "TARGET HIT"
-                        elif "SHORT" in signal_type and current_price <= tgt_price:
-                            exit_reason = "TARGET HIT"
-                    except:
-                        # Trailing SL Logic (Simplified: Use EMA20 Close)
-                        ema20 = intraday_df.iloc[-1]['EMA20']
-                        if "TRAIL" in str(target_val):
-                            if "LONG" in signal_type and current_price < ema20:
-                                exit_reason = "TRAIL SL HIT"
-                            elif "SHORT" in signal_type and current_price > ema20:
-                                exit_reason = "TRAIL SL HIT"
-                    
-                    if exit_reason:
-                        # Calculate PnL
-                        if "LONG" in signal_type:
-                            pnl = (current_price - entry_price) * qty
-                        else:
-                            pnl = (entry_price - current_price) * qty
-                            
-                        # Update Log
-                        close_trade(idx, current_price, exit_reason, pnl)
-                        logging.info(f"🚫 EXIT: {ticker} | Reason: {exit_reason} | PnL: {pnl:.2f}")
-
-            # Map CPR
-            
-            # Map CPR
-            daily_cpr['Date_Only'] = daily_cpr.index.date
-            intraday_df['Date_Only'] = intraday_df.index.date
-            
-            # Get latest candle and CPR
-            curr = intraday_df.iloc[-1]
-            prev = intraday_df.iloc[-2]
-            
-            # Find matching CPR
-            today_cpr = daily_cpr[daily_cpr['Date_Only'] == curr['Date_Only']]
-            if today_cpr.empty: continue
-            today_cpr = today_cpr.iloc[-1]
-            
-            tc = today_cpr['TC']
-            bc = today_cpr['BC']
-            upper_cpr = max(tc, bc)
-            lower_cpr = min(tc, bc)
-            
-            # Logic
-            signal = None
-            price = curr['Close']
-            stop_loss = 0.0
-            target = 0.0
-            atr = curr['ATR']
-            
-            
-            if bias == "BULLISH":
-                # Long Setup: Price > VWAP and (Breakout TC or RSI Cross)
-                if price > curr['VWAP']:
-                    breakout = prev['Close'] < upper_cpr and curr['Close'] > upper_cpr
-                    rsi_cross = prev['RSI'] <= 60 and curr['RSI'] > 60
-                    
-                    if breakout or rsi_cross:
-                        if curr['Volume'] > curr['Vol_SMA20']:
-                            signal = "LONG"
-                            stop_loss = price - (atr * 1.5)
-                            target = price + (atr * 3) # 1:2 RR
-                        else:
-                            logging.debug(f"Skip {ticker} LONG: Vol {curr['Volume']} < Avg {curr['Vol_SMA20']}")
-                    else:
-                        logging.debug(f"Skip {ticker} LONG: No Breakout/RSI Cross (RSI: {curr['RSI']:.1f})")
-                else:
-                    logging.debug(f"Skip {ticker} LONG: Price {price:.1f} <= VWAP {curr['VWAP']:.1f}")
-
-            elif bias == "BEARISH":
-                # Short Setup: Price < VWAP
-                if price < curr['VWAP']:
-                    breakdown = prev['Close'] > lower_cpr and curr['Close'] < lower_cpr
-                    rsi_cross = prev['RSI'] >= 40 and curr['RSI'] < 40
-                    
-                    if breakdown or rsi_cross:
-                        if curr['Volume'] > curr['Vol_SMA20']:
-                            signal = "SHORT"
-                            stop_loss = price + (atr * 1.5)
-                            target = price - (atr * 3) # 1:2 RR
-                        else:
-                             logging.debug(f"Skip {ticker} SHORT: Vol {curr['Volume']} < Avg {curr['Vol_SMA20']}")
-                    else:
-                         logging.debug(f"Skip {ticker} SHORT: No Breakdown/RSI Cross (RSI: {curr['RSI']:.1f})")
-                else:
-                    logging.debug(f"Skip {ticker} SHORT: Price {price:.1f} >= VWAP {curr['VWAP']:.1f}")
-                            
-            if signal:
-                # Prepare Technical Data for AI
+                        sig_ts = pd.to_datetime(signal_time)
+                        # Check df_log for trades defined AFTER this signal time or AT same time
+                        # df_log['Time'] is string, need conversion
+                        if not df_log.empty:
+                            df_log['Time_Ts'] = pd.to_datetime(df_log['Time'])
+                            # Buffer: If we traded within 2 mins of this signal or after
+                            # Usually Signal Time is Candle Close (e.g. 13:40). Entry is 13:40:05.
+                            # So any trade with Time >= Signal Time is a match.
+                            existing = df_log[
+                                (df_log['Ticker'] == ticker) & 
+                                (df_log['Signal'] == signal_data['Signal']) &
+                                (df_log['Time_Ts'] >= sig_ts) 
+                            ]
+                            if not existing.empty:
+                                # logging.info(f"Skipping Duplicate: {ticker} Signal {sig_ts} already traded.")
+                                continue
+                    except Exception as e:
+                        logging.warning(f"Dedupe Check Failed: {e}")
+                signal_type = signal_data['Signal']
+                entry_p = signal_data['Entry']
+                sl_p = signal_data['SL']
+                
+                # Check AI Cooldown
+                ts = time.time()
+                last_ai = ai_cooldowns.get(ticker, 0)
+                if ts - last_ai < 300: continue
+                
                 technicals = {
-                    "Bias": bias,
-                    "CPR": "Narrow" if item.get('trend') else "Normal",
-                    "Close": price,
-                    "VWAP": curr['VWAP'],
-                    "RSI": curr['RSI'],
-                    "Volume": curr['Volume'],
-                    "Vol_SMA20": curr['Vol_SMA20'],
-                    "Prev_Close": prev['Close'],
-                    "Upper_CPR": upper_cpr,
-                    "Lower_CPR": lower_cpr
+                    "Close": current_price,
+                    "Signal": signal_type,
+                    "Entry": entry_p,
+                    "SL": sl_p,
+                    "Strategy": strategy_name,
+                    "Regime": regime
                 }
                 
-                # AI COOLDOWN CHECK
-                current_timestamp = time.time()
-                last_ai_check = ai_cooldowns.get(ticker, 0)
+                validator = AIValidator()
+                ai_bypass = config.get("ALLOW_AI_BYPASS", False)
+                ai_res = validator.validate_trade(ticker, signal_type, entry_p, technicals, allow_bypass=ai_bypass)
+                ai_cooldowns[ticker] = ts
                 
-                # Cooldown period: 5 minutes (300 seconds)
-                # If we checked recently (and presumably got rejected or traded), don't check again immediately.
-                if current_timestamp - last_ai_check < 300:
-                    logging.info(f"⏳ COOLDOWN: Skipping AI check for {ticker} (Last check {int(current_timestamp - last_ai_check)}s ago)")
-                    continue
-
-                # Verify with AI
-                validator = AIValidator() # Reads env var
-                ai_decision = validator.validate_trade(ticker, signal, price, technicals)
-                
-                # Update Cooldown Timestamp
-                ai_cooldowns[ticker] = current_timestamp
-                
-                if ai_decision['valid']:
-                    # Get Strategy Mode
-                    mode = ai_decision.get('mode', 'SNIPER')
-                    
-                    if mode == 'SURFER':
-                        target_desc = "TRAIL EMA20"
-                    else:
-                        target_desc = f"{target:.2f}"
-
-
-                    # Calculate Quantity
-                    risk_amt = ALLOCATION * RISK_PCT
-                    risk_per_share = abs(price - stop_loss)
+                if ai_res['valid']:
                     qty = 0
+                    strike = 0
+                    target_p = 0
+                    order_sym = ""
                     
-                    if risk_per_share > 0:
-                        # Risk Based Sizing: qty = risk_amt / risk per share ? 
-                        # OR Allocation Based: qty = ALLOCATION / price
-                        
-                        # User asked for "Allocation", so usually Fixed Amt.
-                        # Let's check risk:
-                        # If risk_per_share * (ALLOCATION/price) > risk_amt ?
-                        
-                        # Standard Practice: Fixed Allocation approach usually implies Max Investment.
-                        if price > 0:
-                            qty = int(ALLOCATION / price)
-                        
-                    if qty > 0:
-                        if ticker.startswith('^'):
-                            # Indices Options - FIXED 1 LOT
-                            strike = get_atm_strike(price, ticker)
-                            otype = "CE" if "LONG" in signal else "PE"
-                            
-                            # Fixed Lot System
-                            if '^NSEBANK' in ticker:
-                                qty = BANKNIFTY_LOT_SIZE
-                            else:
-                                qty = NIFTY_LOT_SIZE
-                            
-                            signal = f"{signal} [{strike} {otype}]"
+                    if is_index:
+                         # OPTION BUYING
+                         otype = "CE" if signal_type == 'LONG' else "PE"
+                         strike = int(get_strike_for_trade(entry_p, ticker, otype, depth=2)) 
+                         # Nifty Lot Size = 65 (Verified Live), BankNifty = 30 (Std) or 15? Assume 30 for now or checks.
+                         # Actually user config says MAX_NIFTY_TRADES but defaults.
+                         lot_size = 30 if 'BANK' in ticker else 65
+                         
+                         risk_per_share = abs(entry_p - sl_p)
+                         qty = lot_size
+                         if risk_per_share > 0:
+                             risk_amt = ALLOCATION * RISK_PCT
+                             calc_qty = int(risk_amt / (risk_per_share * 0.5))
+                             qty = max(lot_size, (calc_qty // lot_size) * lot_size)
+                         
+                         order_sym = get_fyers_symbol(ticker, strike, otype)
+                         
+                         if regime == "SURFER":
+                             target_p = 0 # No Target
+                         else:
+                             target_p = entry_p + (risk_per_share * 2 * (1 if signal_type == 'LONG' else -1))
+                         
+                    else:
+                         # EQUITY
+                         risk_per_share = abs(entry_p - sl_p)
+                         qty = 1
+                         if risk_per_share > 0:
+                             risk_amt = ALLOCATION * RISK_PCT
+                             qty = int(risk_amt / risk_per_share)
+                         
+                         
+                         order_sym = f"NSE:{ticker.replace('.NS', '')}-EQ"
+                         target_p = entry_p + (risk_per_share * 2 * (1 if signal_type == 'LONG' else -1))
 
-                        else:
-                            # Stock Equity - Fixed Capital
-                            # Already calculated above based on ALLOCATION
-                            pass
-
-                        log_trade(ticker, signal, price, qty, stop_loss, target_desc, datetime.now(), f"[{mode}] {ai_decision['reason']}")
-
-                        # LIVETRADE EXECUTION
-                        if LIVE_TRADE and broker:
-                            execute_order(ticker, signal, qty, stop_loss)
-
+                    full_signal = f"{signal_type} ({strategy_name})"
+                    log_trade(ticker, order_sym, full_signal, entry_p, qty, sl_p, target_p, datetime.now(), ai_res['reason'], regime)
+                    
+                    if LIVE_TRADE and broker:
+                        try:
+                            side = "BUY"
+                            if not is_index: side = "BUY" if signal_type == "LONG" else "SELL"
+                            execute_order(order_sym, side, qty, 0)
+                        except Exception as e:
+                             logging.error(f"Execution Failed: {e}")
                 else:
-                    logging.info(f"AI REJECTED {ticker} {signal}: {ai_decision['reason']}")
-                
+                     logging.info(f"AI REJECTED: {ai_res['reason']}")
+                     
         except Exception as e:
-            logging.error(f"Error checking {ticker}: {e}")
-            continue
+            logging.error(f"Check error {ticker}: {e}")
 
 def monitor_positions():
-    """
-    Placeholder for Position Management (TSL).
-    In a real broker integration, this would fetch open positions and update SL orders.
-    For Paper Trading log, we can't easily track state across loop iterations without a DB.
-    Adding a simple log message about TSL Plan.
-    """
-    pass
-
-def close_trade(idx, exit_price, reason, pnl):
-    """Update trade log with exit details."""
+    """Check Open Trades for SL or Exit Signals."""
+    if not os.path.exists(TRADE_LOG): return
+    
     try:
         df = pd.read_csv(TRADE_LOG)
-        df.at[idx, 'Exit_Time'] = datetime.now()
-        df.at[idx, 'Exit_Price'] = exit_price
-        df.at[idx, 'Exit_Reason'] = reason
-        df.at[idx, 'PnL'] = pnl
-        df.at[idx, 'Status'] = 'CLOSED'
-        df.to_csv(TRADE_LOG, index=False)
-    except Exception as e:
-        logging.error(f"Failed to close trade: {e}")
+        open_trades = df[df['Status'] == 'OPEN']
+        if open_trades.empty: return
 
-def log_trade(ticker, signal, price, qty, sl, target, time, notes=""):
-    """Log trade to CSV and Logger."""
-    target_str = f"{target:.2f}" if isinstance(target, (int, float)) else str(target)
-    msg = f"SIGNAL: {signal} {qty} x {ticker} @ {price:.2f} | SL: {sl:.2f} TGT: {target_str} | AI: {notes}"
-    logging.info(msg)
-    
-    new_row = {
-        'Time': time, 
-        'Ticker': ticker, 
-        'Signal': signal, 
-        'Entry_Price': price, 
-        'Qty': qty, 
-        'SL': sl, 
-        'Target': target, 
-        'Notes': notes,
-        'Exit_Time': None,
-        'Exit_Price': None,
-        'Exit_Reason': None,
-        'PnL': 0.0,
-        'Status': 'OPEN'
-    }
-    
-    df_new = pd.DataFrame([new_row])
-    header = not os.path.exists(TRADE_LOG)
-    df_new.to_csv(TRADE_LOG, mode='a', header=header, index=False)
+        # Reload Config for Safety
+        config = load_config()
 
-def execute_order(ticker, signal, qty, stop_loss):
-    """Execute Live Order on Fyers."""
-    try:
-        side = "BUY" if "LONG" in signal else "SELL"
-        
-        if ticker.startswith('^'):
-            # Calculate Option Symbol
-            # strike = get_atm_strike(curr['Close'], ticker) # Need current price, passed as arg? 
-            # Note: execute_order doesn't have price. 
-            # We must detect Strike from signal string or pass it?
-            # Current Signal: "LONG [25000 CE]"
+        for idx, trade in open_trades.iterrows():
+            ticker = trade['Ticker']
+            signal = trade['Signal']
+            entry_p = float(trade['Entry_Price'])
+            sl_p = float(trade['SL'])
+            qty = int(trade['Qty'])
+            instrument = trade['Instrument']
+            regime = trade.get('Regime', 'SNIPER') # Default
             
             try:
-                import re
-                # Extract Strike and Type from Signal String
-                # Format: "LONG [25000 CE]"
-                match = re.search(r'\[(\d+)\s+(CE|PE)\]', signal)
-                if match:
-                    strike = int(match.group(1))
-                    otype = match.group(2)
+                # 1. Fetch Live Data
+                # Use scanner/strategy logic to get latest candle
+                daily, intraday = fetch_data(ticker, broker=broker) # Uses cache or fetch
+                if intraday.empty: continue
+                
+                # Calculate Indicators
+                intraday = calculate_9ema(intraday)
+                curr = intraday.iloc[-1]
+                prev = intraday.iloc[-2] # Closed Candle
+                
+                current_price = curr['Close']
+                
+                # 2. Check Hard SL (Live Price)
+                # If Long: Price < SL
+                # If Short: Price > SL
+                hl_hit = False
+                exit_msg = ""
+                
+                # Dynamic PnL Simulation
+                pnl = 0
+                if 'LONG' in signal:
+                    pnl = (current_price - entry_p) * qty
+                    if current_price <= sl_p:
+                        hl_hit = True
+                        exit_msg = "Hard SL Hit"
+                else: 
+                     # Short
+                     pnl = (entry_p - current_price) * qty
+                     if current_price >= sl_p:
+                         hl_hit = True
+                         exit_msg = "Hard SL Hit"
+                         
+                if hl_hit:
+                    logging.info(f"🛑 SL HIT for {ticker}: {current_price} vs {sl_p}")
+                    close_trade_execution(idx, ticker, instrument, qty, signal, current_price, exit_msg, pnl)
+                    continue
                     
-                    fyers_symbol = get_fyers_symbol(ticker, strike, otype)
-                    
-                    # Lot Size Logic
-                    lot_size = 30 if 'BANK' in ticker else 65 # Updated Lot Sizes
-                    # Adjust Qty to be multiple of Lot Size
-                    qty = max(lot_size, int(round(qty / lot_size) * lot_size))
-                    
-                    logging.info(f"🎯 OPTION SYMBOL: {fyers_symbol} (Lot: {lot_size}, Qty: {qty})")
-                    side = "BUY" # Options are always Bought for Long/Short logic here?
-                    # Strategy Logic:
-                    # Long Signal -> Buy CE (Side BUY)
-                    # Short Signal -> Buy PE (Side BUY)
-                    # Correct. We always BUY options.
-                    side = "BUY" 
-                    
+                # 3. Check Strategy Exit (9EMA Reversal) on CLOSED Candle
+                # Long Exit: Close < 9EMA
+                # Short Exit: Close > 9EMA
+                
+                strategy_exit = False
+                
+                if 'LONG' in signal:
+                    if prev['Close'] < prev['EMA9']:
+                        strategy_exit = True
+                        exit_msg = "9EMA Reversal (Close < 9EMA)"
                 else:
-                    logging.error(f"Could not parse Option details from: {signal}")
-                    return
+                    if prev['Close'] > prev['EMA9']:
+                        strategy_exit = True
+                        exit_msg = "9EMA Reversal (Close > 9EMA)"
+                        
+                if strategy_exit:
+                    logging.info(f"⚠️ STRATEGY EXIT for {ticker}: {prev['Close']} vs EMA {prev['EMA9']:.2f}")
+                    # Use Close of that candle or Current market? Use Current Market for execution
+                    close_trade_execution(idx, ticker, instrument, qty, signal, current_price, exit_msg, pnl)
+                    continue
+                    
             except Exception as e:
-                logging.error(f"Option Construct Create Failed: {e}")
-                return
-        
-        else:
-            # Equity Execution
-            fyers_symbol = f"NSE:{ticker}-EQ"
+                logging.error(f"Monitor Error {ticker}: {e}")
 
-        # 1. Place Market Entry
-        logging.info(f"🚀 EXECUTING LIVE: {side} {qty} {fyers_symbol}")
-        res = broker.place_order(fyers_symbol, int(qty), side, order_type="MARKET", product_type="INTRADAY")
-        logging.info(f"Order Response: {res}")
-        
-        # 2. Place Stop Loss (Simplified SL-M)
-        if 'id' in res: 
-            # For Options, SL is critical.
-            # SL-M supported.
-            sl_side = "SELL" # Since we always BUY options
-            
-            # SL Calculation for Options is tricky without Premium Price.
-            # We can't place SL-M immediately without knowing execution price.
-            # Ideally, wait for trade update or use BO.
-            # For MVP: Just Log warning.
-            logging.warning("⚠️ Option SL not placed (Need Execution Price). Manage Manually!")
-            
     except Exception as e:
-        logging.error(f"Live Execution Failed: {e}")
+        logging.error(f"Monitor Loop Error: {e}")
 
-def main():
-    logging.info("--- Live Trading Bot Started ---")
+def close_trade_execution(idx, ticker, instrument, qty, signal, price, reason, pnl):
+    # 1. Log Exit
+    close_trade(idx, price, reason, pnl)
+    logging.info(f"✅ CLOSED {ticker}: {reason} | PnL: {pnl:.2f}")
     
-    # 1. Build Watchlist
-    watchlist = get_watchlist()
-    if not watchlist:
-        logging.warning("No stocks found matching criteria today. Exiting.")
-        return
+    # 2. Execute Market Order
+    if LIVE_TRADE and broker:
+        try:
+            side = "SELL" # Default for Closing Long
+            if 'SHORT' in signal: side = "BUY" # Closing Short
+            
+            # For Indices/Fyers Options, we Buy/Sell the Instrument
+            # Logic same as entry but reversed
+            
+            execute_order(instrument, side, qty, 0)
+        except Exception as e:
+            logging.error(f"Close Execution Failed: {e}")
 
-    logging.info("Starting Monitoring Loop (Press Ctrl+C to Stop)...")
+def close_trade(idx, price, reason, pnl):
+    try:
+        df = pd.read_csv(TRADE_LOG)
+        df.at[idx, 'Status'] = 'CLOSED'
+        df.at[idx, 'Exit_Time'] = datetime.now()
+        df.at[idx, 'Exit_Price'] = price
+        df.at[idx, 'Exit_Reason'] = reason
+        df.at[idx, 'PnL'] = pnl
+        df.to_csv(TRADE_LOG, index=False)
+    except: pass
+
+def log_trade(ticker, instrument, signal, price, qty, sl, target, time, notes="", regime="SNIPER"):
+    logging.info(f"SIGNAL: {signal} [{regime}] {qty} x {ticker} ({instrument}) @ {price} | SL {sl:.2f}")
+    if not os.path.exists(TRADE_LOG):
+        pd.DataFrame(columns=TRADE_COLUMNS).to_csv(TRADE_LOG, index=False)
+    
+    new_data = {
+        'Time': time, 'Ticker': ticker, 'Instrument': instrument, 'Signal': signal, 'Entry_Price': price,
+        'Qty': qty, 'SL': sl, 'Target': target, 'Notes': notes, 'Status': 'OPEN', 'PnL': 0.0, 'Regime': regime
+    }
+    pd.DataFrame([new_data], columns=TRADE_COLUMNS).to_csv(TRADE_LOG, mode='a', header=False, index=False)
+
+def execute_order(symbol, side, qty, stop_loss):
+    if not broker: return
+    try:
+        logging.info(f"🚀 LIVE ORDER: {side} {qty} {symbol}")
+        res = broker.place_order(symbol, int(qty), side, order_type="MARKET", product_type="INTRADAY")
+        if 'id' in res: logging.info(f"Order Placed: {res['id']}")
+    except Exception as e: logging.error(f"Execution Error: {e}")
+
+def square_off_all_positions():
+    """Close all OPEN positions at EOD (3:15 PM)."""
+    if not os.path.exists(TRADE_LOG): return
     
     try:
-        while True:
-            # Check market hours
-            now = datetime.now()
-            start_time = now.replace(hour=9, minute=15, second=0, microsecond=0)
-            end_time = now.replace(hour=15, minute=30, second=0, microsecond=0)
-            
-            # Allow pre-market scan/init but block loop execution
-            # Actually, to prevent "Off Market" trades completely, we shout wait.
-            if now < start_time or now > end_time:
-                # Sleep to avoid spamming logs (every 1 min)
-                if now.second < 5: 
-                    logging.info(f"Market Closed. Waiting for 09:15 - 15:30... (Current: {now.strftime('%H:%M:%S')})")
-                time.sleep(5)
-                continue
+        df = pd.read_csv(TRADE_LOG)
+        open_trades = df[df['Status'] == 'OPEN']
+        if open_trades.empty: return
 
-            check_for_signals(watchlist)
+        logging.info(f"⏰ EOD SQUARE OFF: Closing {len(open_trades)} positions...")
+        
+        for idx, trade in open_trades.iterrows():
+            ticker = trade['Ticker']
+            qty = int(trade['Qty'])
+            signal = trade['Signal']
+            instrument = trade['Instrument']
+            entry_p = float(trade['Entry_Price'])
             
-            # Sleep 5 seconds for faster reaction
-            time.sleep(5) 
-            
-    except KeyboardInterrupt:
-        logging.info("Bot stopped by user.")
+            # Fetch LTP for closing price
+            # We can use fetch_data or just assume last known price if market is closing/closed
+            # But better to try to get a quote.
+            try:
+                # Taking a quick quote via fetch_data is safest re-use
+                daily, intraday = fetch_data(ticker, broker=broker)
+                if not intraday.empty:
+                    close_price = intraday.iloc[-1]['Close']
+                else:
+                    close_price = entry_p # Fallback avoids crash
+                    
+                # Calculate PnL
+                pnl = 0
+                if 'LONG' in signal: pnl = (close_price - entry_p) * qty
+                else: pnl = (entry_p - close_price) * qty
+                
+                close_trade_execution(idx, ticker, instrument, qty, signal, close_price, "EOD Square Off", pnl)
+                
+            except Exception as e:
+                logging.error(f"Square Off Error {ticker}: {e}")
+                
     except Exception as e:
-        logging.error(f"Bot Crashed: {e}")
+        logging.error(f"Square Off Loop Error: {e}")
+
+def main():
+    logging.info("--- Live Bot (Indices + Stocks + ADX Dynamic) Started ---")
+    watchlist = get_watchlist()
+    
+    while True:
+        try:
+            now = datetime.now()
+            
+            # Pre-Market
+            if now.hour < 9 or (now.hour == 9 and now.minute < 15):
+                 logging.info(f"Pre-Market Wait... {now.strftime('%H:%M:%S')}")
+                 time.sleep(60)
+                 continue
+                 
+            # Post-Market / Square Off (3:15 PM)
+            if now.hour >= 15 and now.minute >= 15:
+                 logging.info("Market Closing (3:15 PM). Squaring Off...")
+                 square_off_all_positions()
+                 time.sleep(60)
+                 continue
+            
+            # Reload config dynamically every loop? Or just in main?
+            # Let's reload to pick up changes from UI
+            config = load_config() 
+            monitor_positions() # Check existing trades FIRST
+            check_for_signals(watchlist, config)
+            time.sleep(60)
+        except KeyboardInterrupt: break
+        except Exception as e:
+            logging.error(f"Loop error: {e}")
+            time.sleep(10)
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,3 @@
+Time,Ticker,Signal,Entry_Price,Qty,SL,Target,Notes,Exit_Time,Exit_Price,Exit_Reason,PnL,Status
+2026-02-05 09:36:41.037435,SIM_STOCK,LONG,100.5,328,99.5,102.5,AI Validation Disabled (No API Key or Package Missing),OPEN,0.0
+2026-02-05 09:36:41.040168,^NSEI,LONG,100.5,325,99.5,102.5,AI Validation Disabled (No API Key or Package Missing),OPEN,0.0

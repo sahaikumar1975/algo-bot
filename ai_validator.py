@@ -13,6 +13,7 @@ except ImportError:
     genai = None
 
 from typing import Dict, Any
+from datetime import datetime
 import numpy as np
 
 class AIValidator:
@@ -29,7 +30,21 @@ class AIValidator:
             except Exception as e:
                 logging.error(f"Failed to initialize Gemini AI: {e}")
 
-    def validate_trade(self, ticker: str, signal: str, price: float, technicals: Dict[str, Any]) -> Dict[str, Any]:
+    def log_usage(self):
+        """Log the AI call timestamp to a CSV file."""
+        try:
+            log_file = "ai_usage_log.csv"
+            # Use absolute path relative to this file
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            log_path = os.path.join(base_dir, log_file)
+            
+            with open(log_path, "a") as f:
+                # Format: Timestamp
+                f.write(f"{datetime.now().isoformat()}\n")
+        except Exception as e:
+            logging.error(f"Failed to log AI usage: {e}")
+
+    def validate_trade(self, ticker: str, signal: str, price: float, technicals: Dict[str, Any], allow_bypass: bool = False) -> Dict[str, Any]:
         """
         Asks Gemini AI to validate the trade.
         Returns: {'valid': bool, 'reason': str}
@@ -70,9 +85,13 @@ class AIValidator:
         
         try:
             # Using the new SDK syntax
-            # We use gemini-2.0-flash if available, or 1.5-flash
+            # We use gemini-flash-latest based on available models
+            
+            # Log usage before call
+            self.log_usage()
+
             response = self.client.models.generate_content(
-                model='gemini-2.0-flash', 
+                model='gemini-2.0-flash-lite-001', 
                 contents=prompt
             )
             
@@ -92,17 +111,30 @@ class AIValidator:
             logging.error(f"AI Validation Error: {error_msg}")
             
             if "429" in error_msg or "Resource has been exhausted" in error_msg:
-                 return {
-                     'valid': False, # FAIL SAFE: Do not trade if AI is down/throttled
-                     'reason': 'AI Rate Limit Exceeded (429)',
-                     'mode': 'SNIPER'
-                 }
+                 if allow_bypass:
+                     return {
+                         'valid': True, # SOFT FAIL: Allow trade despite AI Limit
+                         'reason': 'AI Rate Limit Exceeded (429) - Bypassed',
+                         'mode': 'SNIPER'
+                     }
+                 else:
+                     return {
+                         'valid': False, # STRICT FAIL: Block trade
+                         'reason': 'AI Rate Limit Exceeded (429) - Blocked',
+                         'mode': 'SNIPER'
+                     }
             
             # CRITICAL AUTH ERRORS (400, 401, 403)
             # 400: Bad Request (Expired Key)
             # 401: Unauthorized
             # 403: Forbidden
             if "400" in error_msg or "401" in error_msg or "403" in error_msg or "API key expired" in error_msg:
+                if allow_bypass:
+                     return {
+                         'valid': True, # SOFT FAIL: Allow trade despite Auth Error
+                         'reason': f'AI Auth Error ({error_msg}) - Bypassed',
+                         'mode': 'SNIPER'
+                     }
                 return {
                     'valid': False, # STRICT FAIL SAFE
                     'reason': f'AI CRITICAL ERROR: {error_msg} - CHECK API KEY',

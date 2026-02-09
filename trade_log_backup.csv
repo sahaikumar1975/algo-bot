@@ -1,0 +1,332 @@
+Time,Ticker,Signal,Entry_Price,Qty,SL,Target,Notes,Exit_Time,Exit_Price,Exit_Reason,PnL,Status
+2026-01-27 22:03:56.632430,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,1729.31,"[SNIPER] AI Error (429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. 
+* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.0-flash-exp
+* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.0-flash-exp
+* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0, model: gemini-2.0-flash-exp
+Please retry in 3.482605916s. [links {
+  description: ""Learn more about Gemini API quotas""
+  url: ""https://ai.google.dev/gemini-api/docs/rate-limits""
+}
+, violations {
+  quota_metric: ""generativelanguage.googleapis.com/generate_content_free_tier_requests""
+  quota_id: ""GenerateRequestsPerDayPerProjectPerModel-FreeTier""
+  quota_dimensions {
+    key: ""model""
+    value: ""gemini-2.0-flash-exp""
+  }
+  quota_dimensions {
+    key: ""location""
+    value: ""global""
+  }
+}
+violations {
+  quota_metric: ""generativelanguage.googleapis.com/generate_content_free_tier_requests""
+  quota_id: ""GenerateRequestsPerMinutePerProjectPerModel-FreeTier""
+  quota_dimensions {
+    key: ""model""
+    value: ""gemini-2.0-flash-exp""
+  }
+  quota_dimensions {
+    key: ""location""
+    value: ""global""
+  }
+}
+violations {
+  quota_metric: ""generativelanguage.googleapis.com/generate_content_free_tier_input_token_count""
+  quota_id: ""GenerateContentInputTokensPerModelPerMinute-FreeTier""
+  quota_dimensions {
+    key: ""model""
+    value: ""gemini-2.0-flash-exp""
+  }
+  quota_dimensions {
+    key: ""location""
+    value: ""global""
+  }
+}
+, retry_delay {
+  seconds: 3
+}
+]) - Defaulting to Valid",2026-01-31 09:20:12.085869,1691.4000244140625,SL HIT,-6307.1839599609375,CLOSED
+2026-01-27 22:05:35.456790,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,1729.31,"[SNIPER] AI Error (429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. 
+* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0, model: gemini-2.0-flash-exp
+* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.0-flash-exp
+* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.0-flash-exp
+Please retry in 24.594818249s. [links {
+  description: ""Learn more about Gemini API quotas""
+  url: ""https://ai.google.dev/gemini-api/docs/rate-limits""
+}
+, violations {
+  quota_metric: ""generativelanguage.googleapis.com/generate_content_free_tier_input_token_count""
+  quota_id: ""GenerateContentInputTokensPerModelPerMinute-FreeTier""
+  quota_dimensions {
+    key: ""model""
+    value: ""gemini-2.0-flash-exp""
+  }
+  quota_dimensions {
+    key: ""location""
+    value: ""global""
+  }
+}
+violations {
+  quota_metric: ""generativelanguage.googleapis.com/generate_content_free_tier_requests""
+  quota_id: ""GenerateRequestsPerMinutePerProjectPerModel-FreeTier""
+  quota_dimensions {
+    key: ""model""
+    value: ""gemini-2.0-flash-exp""
+  }
+  quota_dimensions {
+    key: ""location""
+    value: ""global""
+  }
+}
+violations {
+  quota_metric: ""generativelanguage.googleapis.com/generate_content_free_tier_requests""
+  quota_id: ""GenerateRequestsPerDayPerProjectPerModel-FreeTier""
+  quota_dimensions {
+    key: ""model""
+    value: ""gemini-2.0-flash-exp""
+  }
+  quota_dimensions {
+    key: ""location""
+    value: ""global""
+  }
+}
+, retry_delay {
+  seconds: 24
+}
+]) - Defaulting to Valid",2026-01-31 09:20:12.088352,1691.4000244140625,SL HIT,-6307.1839599609375,CLOSED
+2026-01-27 22:07:19.236936,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,1729.31,"[SNIPER] AI Error (429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. 
+* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.0-flash-exp
+* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.0-flash-exp
+* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0, model: gemini-2.0-flash-exp
+Please retry in 40.786399135s. [links {
+  description: ""Learn more about Gemini API quotas""
+  url: ""https://ai.google.dev/gemini-api/docs/rate-limits""
+}
+, violations {
+  quota_metric: ""generativelanguage.googleapis.com/generate_content_free_tier_requests""
+  quota_id: ""GenerateRequestsPerDayPerProjectPerModel-FreeTier""
+  quota_dimensions {
+    key: ""model""
+    value: ""gemini-2.0-flash-exp""
+  }
+  quota_dimensions {
+    key: ""location""
+    value: ""global""
+  }
+}
+violations {
+  quota_metric: ""generativelanguage.googleapis.com/generate_content_free_tier_requests""
+  quota_id: ""GenerateRequestsPerMinutePerProjectPerModel-FreeTier""
+  quota_dimensions {
+    key: ""model""
+    value: ""gemini-2.0-flash-exp""
+  }
+  quota_dimensions {
+    key: ""location""
+    value: ""global""
+  }
+}
+violations {
+  quota_metric: ""generativelanguage.googleapis.com/generate_content_free_tier_input_token_count""
+  quota_id: ""GenerateContentInputTokensPerModelPerMinute-FreeTier""
+  quota_dimensions {
+    key: ""model""
+    value: ""gemini-2.0-flash-exp""
+  }
+  quota_dimensions {
+    key: ""location""
+    value: ""global""
+  }
+}
+, retry_delay {
+  seconds: 40
+}
+]) - Defaulting to Valid",2026-01-31 09:20:12.090441,1691.4000244140625,SL HIT,-6307.1839599609375,CLOSED
+2026-01-27 22:08:55.470827,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,1729.31,"[SNIPER] AI Error (429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. 
+* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.0-flash-exp
+* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.0-flash-exp
+* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0, model: gemini-2.0-flash-exp
+Please retry in 4.553534355s. [links {
+  description: ""Learn more about Gemini API quotas""
+  url: ""https://ai.google.dev/gemini-api/docs/rate-limits""
+}
+, violations {
+  quota_metric: ""generativelanguage.googleapis.com/generate_content_free_tier_requests""
+  quota_id: ""GenerateRequestsPerDayPerProjectPerModel-FreeTier""
+  quota_dimensions {
+    key: ""model""
+    value: ""gemini-2.0-flash-exp""
+  }
+  quota_dimensions {
+    key: ""location""
+    value: ""global""
+  }
+}
+violations {
+  quota_metric: ""generativelanguage.googleapis.com/generate_content_free_tier_requests""
+  quota_id: ""GenerateRequestsPerMinutePerProjectPerModel-FreeTier""
+  quota_dimensions {
+    key: ""model""
+    value: ""gemini-2.0-flash-exp""
+  }
+  quota_dimensions {
+    key: ""location""
+    value: ""global""
+  }
+}
+violations {
+  quota_metric: ""generativelanguage.googleapis.com/generate_content_free_tier_input_token_count""
+  quota_id: ""GenerateContentInputTokensPerModelPerMinute-FreeTier""
+  quota_dimensions {
+    key: ""model""
+    value: ""gemini-2.0-flash-exp""
+  }
+  quota_dimensions {
+    key: ""location""
+    value: ""global""
+  }
+}
+, retry_delay {
+  seconds: 4
+}
+]) - Defaulting to Valid",2026-01-31 09:20:12.092458,1691.4000244140625,SL HIT,-6307.1839599609375,CLOSED
+2026-01-27 22:10:32.205432,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,1729.31,"[SNIPER] AI Error (429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. 
+* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0, model: gemini-2.0-flash-exp
+* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.0-flash-exp
+* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.0-flash-exp
+Please retry in 27.814083808s. [links {
+  description: ""Learn more about Gemini API quotas""
+  url: ""https://ai.google.dev/gemini-api/docs/rate-limits""
+}
+, violations {
+  quota_metric: ""generativelanguage.googleapis.com/generate_content_free_tier_input_token_count""
+  quota_id: ""GenerateContentInputTokensPerModelPerMinute-FreeTier""
+  quota_dimensions {
+    key: ""model""
+    value: ""gemini-2.0-flash-exp""
+  }
+  quota_dimensions {
+    key: ""location""
+    value: ""global""
+  }
+}
+violations {
+  quota_metric: ""generativelanguage.googleapis.com/generate_content_free_tier_requests""
+  quota_id: ""GenerateRequestsPerMinutePerProjectPerModel-FreeTier""
+  quota_dimensions {
+    key: ""model""
+    value: ""gemini-2.0-flash-exp""
+  }
+  quota_dimensions {
+    key: ""location""
+    value: ""global""
+  }
+}
+violations {
+  quota_metric: ""generativelanguage.googleapis.com/generate_content_free_tier_requests""
+  quota_id: ""GenerateRequestsPerDayPerProjectPerModel-FreeTier""
+  quota_dimensions {
+    key: ""model""
+    value: ""gemini-2.0-flash-exp""
+  }
+  quota_dimensions {
+    key: ""location""
+    value: ""global""
+  }
+}
+, retry_delay {
+  seconds: 27
+}
+]) - Defaulting to Valid",2026-01-31 09:20:12.094259,1691.4000244140625,SL HIT,-6307.1839599609375,CLOSED
+2026-01-27 22:12:12.889802,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,1729.31,"[SNIPER] AI Error (400 API key expired. Please renew the API key. [reason: ""API_KEY_INVALID""
+domain: ""googleapis.com""
+metadata {
+  key: ""service""
+  value: ""generativelanguage.googleapis.com""
+}
+, locale: ""en-US""
+message: ""API key expired. Please renew the API key.""
+]) - Defaulting to Valid",2026-01-31 09:20:12.096023,1691.4000244140625,SL HIT,-6307.1839599609375,CLOSED
+2026-01-27 22:13:53.129827,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,1729.31,"[SNIPER] AI Error (400 API key expired. Please renew the API key. [reason: ""API_KEY_INVALID""
+domain: ""googleapis.com""
+metadata {
+  key: ""service""
+  value: ""generativelanguage.googleapis.com""
+}
+, locale: ""en-US""
+message: ""API key expired. Please renew the API key.""
+]) - Defaulting to Valid",2026-01-31 09:20:12.097756,1691.4000244140625,SL HIT,-6307.1839599609375,CLOSED
+2026-01-27 22:16:04.584831,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,TRAIL EMA20,"[SURFER] This is a high-conviction LONG setup. The Narrow CPR indicates potential for a large trend day, which is confirmed by the price trading significantly above both the Upper CPR and VWAP. Crucially, Volume is 60% higher than average, validating the upward movement and suggesting a strong breakout.",2026-01-31 09:20:12.099585,1691.4000244140625,TRAIL SL HIT,-6307.1839599609375,CLOSED
+2026-01-27 22:17:50.939751,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,TRAIL EMA20,"[SURFER] This is a high-conviction LONG setup. Price is trading strongly above VWAP and the CPR levels. The RSI (62) confirms strong momentum, and critically, Volume is significantly higher than the 20-period SMA, confirming the validity of the breakout. The Narrow CPR supports the expectation of a trending day.",2026-01-31 09:20:12.101314,1691.4000244140625,TRAIL SL HIT,-6307.1839599609375,CLOSED
+2026-01-27 22:19:41.052849,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,TRAIL EMA20,"[SURFER] This is a high probability LONG setup. The trade aligns with a BULLISH bias, price is trading strongly above VWAP and the Upper CPR. Crucially, the combination of a Narrow CPR and high volume (Volume 80.2K vs SMA 49.8K) indicates strong directional conviction and confirms a potential trend day.",2026-01-31 09:20:12.102958,1691.4000244140625,TRAIL SL HIT,-6307.1839599609375,CLOSED
+2026-01-27 22:21:25.634081,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,TRAIL EMA20,"[SURFER] This is a high-probability breakout setup. The price is significantly above both the Narrow CPR and VWAP, confirming strong momentum. Crucially, the current Volume (80k) is far exceeding the 20-day SMA (50k), validating the aggressive bullish move. The context strongly favors trend continuation.",2026-01-31 09:20:12.104570,1691.4000244140625,TRAIL SL HIT,-6307.1839599609375,CLOSED
+2026-01-27 22:23:10.035721,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,1729.31,"[SNIPER] AI Error (400 API key expired. Please renew the API key. [reason: ""API_KEY_INVALID""
+domain: ""googleapis.com""
+metadata {
+  key: ""service""
+  value: ""generativelanguage.googleapis.com""
+}
+, locale: ""en-US""
+message: ""API key expired. Please renew the API key.""
+]) - Defaulting to Valid",2026-01-31 09:20:12.106055,1691.4000244140625,SL HIT,-6307.1839599609375,CLOSED
+2026-01-27 22:24:56.525231,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,TRAIL EMA20,"[SURFER] This is a high-probability breakout setup. The Bias is BULLISH, confirmed by the price trading significantly above the Narrow CPR and VWAP. Volume (80k) is high, 60% above the 20-period SMA (50k), suggesting strong institutional interest and validating the breakout attempt. RSI (62) indicates healthy momentum.",2026-01-31 09:20:12.107558,1691.4000244140625,TRAIL SL HIT,-6307.1839599609375,CLOSED
+2026-01-27 22:26:39.910892,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,TRAIL EMA20,"[SURFER] This is a high-conviction breakout setup. The Bias is BULLISH, and the price is trading significantly above both the VWAP and the narrow CPR range. Crucially, the current volume is high (80k) compared to the 20-day average (50k), confirming strong momentum and conviction behind the move.",2026-01-31 09:20:12.109039,1691.4000244140625,TRAIL SL HIT,-6307.1839599609375,CLOSED
+2026-01-27 22:28:18.814876,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,TRAIL EMA20,"[SURFER] High probability breakout setup. The signal is validated by a BULLISH bias, price trading significantly above VWAP, and a massive volume surge (80k vs 50k SMA). The Narrow CPR further indicates high potential for a strong trending move.",2026-01-31 09:20:12.110467,1691.4000244140625,TRAIL SL HIT,-6307.1839599609375,CLOSED
+2026-01-27 22:30:04.392003,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,TRAIL EMA20,"[SURFER] This is a high-conviction LONG setup. The bullish bias is confirmed by a narrow CPR (indicating breakout potential), and the price is trading strongly above both VWAP (1714.83) and the Upper CPR (1709.90). Crucially, the volume (80.2k) is significantly higher than the 20-period SMA (49.9k), validating the breakout strength.",2026-01-31 09:20:12.111886,1691.4000244140625,TRAIL SL HIT,-6307.1839599609375,CLOSED
+2026-01-27 22:31:49.144112,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,TRAIL EMA20,"[SURFER] This is a high-probability LONG setup. The primary signals are strongly BULLISH: Price is trading well above the VWAP and the narrow CPR. Crucially, volume is significantly higher than the 20-period average (80k vs 49.8k), providing excellent conviction for a directional breakout. RSI is also strong at 62.",2026-01-31 09:20:12.113316,1691.4000244140625,TRAIL SL HIT,-6307.1839599609375,CLOSED
+2026-01-28 09:14:32.236488,HCLTECH.NS,LONG,1720.199951171875,219,1715.6463535853795,1729.31,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-31 09:20:12.114702,1691.4000244140625,SL HIT,-6307.1839599609375,CLOSED
+2026-01-28 09:38:27.311561,ULTRACEMCO.NS,LONG,12714.0,19,12661.714285714286,12818.57,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 09:15:12.655750,12618.0,SL HIT,-1824.0,CLOSED
+2026-01-28 09:39:54.550568,HCLTECH.NS,LONG,1718.300048828125,115,1709.6107526506696,1735.68,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-31 09:20:12.116099,1691.4000244140625,SL HIT,-3093.5028076171875,CLOSED
+2026-01-28 09:40:06.979744,ULTRACEMCO.NS,LONG,12722.0,19,12669.5,12827.00,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 09:15:12.659155,12618.0,SL HIT,-1976.0,CLOSED
+2026-01-28 09:44:01.557653,MARUTI.NS,SHORT,14971.0,9,15081.57142857143,14749.86,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 08:35:15.852906,14502.0,TARGET HIT,4221.0,CLOSED
+2026-01-28 10:53:37.098830,ULTRACEMCO.NS,LONG,12741.0,33,12711.214285714286,12800.57,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 09:15:12.661018,12618.0,SL HIT,-4059.0,CLOSED
+2026-01-28 10:55:00.773603,ULTRACEMCO.NS,LONG,12732.0,32,12701.035714285714,12793.93,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 09:15:12.662836,12618.0,SL HIT,-3648.0,CLOSED
+2026-01-28 11:19:48.290325,HDFCLIFE.NS,LONG,724.0,761,722.687506539481,726.62,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 08:35:22.091057,730.0,TARGET HIT,4566.0,CLOSED
+2026-01-28 11:43:22.743067,HEROMOTOCO.NS,SHORT,5332.5,52,5351.678571428572,5294.14,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-31 09:20:20.131758,5541.0,SL HIT,-10842.0,CLOSED
+2026-01-28 11:45:01.803835,HEROMOTOCO.NS,SHORT,5334.0,52,5353.178571428572,5295.64,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-31 09:20:20.134231,5541.0,SL HIT,-10764.0,CLOSED
+2026-01-28 12:02:48.754390,ONGC.NS,LONG,265.0,693,263.5589272635324,267.88,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,,,,,OPEN
+2026-01-28 12:04:26.797655,ONGC.NS,LONG,266.25,631,264.6664254324777,269.42,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,,,,,OPEN
+2026-01-28 13:04:56.096929,ULTRACEMCO.NS,LONG,12767.0,41,12742.67857142857,12815.64,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 08:35:18.671357,12717.0,SL HIT,-2050.0,CLOSED
+2026-01-28 14:12:39.095215,MARUTI.NS,SHORT,14804.0,10,14895.17857142857,14621.64,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 08:35:15.854706,14502.0,TARGET HIT,3020.0,CLOSED
+2026-01-28 14:14:16.853587,MARUTI.NS,SHORT,14663.0,9,14771.535714285714,14445.93,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 09:15:31.832066,14434.0,TARGET HIT,2061.0,CLOSED
+2026-01-28 14:24:04.025163,TCS.NS,SHORT,3184.89990234375,165,3190.9427490234375,3172.81,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 08:35:09.542447,3139.0,TARGET HIT,7573.48388671875,CLOSED
+2026-01-28 14:33:37.498984,LTIM.NS,LONG,6007.5,76,5994.375,6033.75,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 09:15:07.851488,5933.5,SL HIT,-5624.0,CLOSED
+2026-01-28 14:44:51.089619,HCLTECH.NS,LONG,1718.699951171875,330,1715.6785409109932,1724.74,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-31 09:20:12.117428,1691.4000244140625,SL HIT,-9008.975830078123,CLOSED
+2026-01-28 14:46:46.247107,SBILIFE.NS,LONG,2069.199951171875,122,2061.035683768136,2085.53,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 08:35:25.056572,1996.9000244140625,SL HIT,-8820.591064453125,CLOSED
+2026-01-28 14:48:07.808151,COALINDIA.NS,LONG,440.6000061035156,804,439.3571483067104,443.09,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,,,,,OPEN
+2026-01-28 14:49:36.486584,COALINDIA.NS,LONG,441.0,768,439.6982116699219,443.60,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,,,,,OPEN
+2026-01-28 14:52:59.512938,UPL.NS,LONG,713.4000244140625,562,711.6214556012835,716.96,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 08:35:24.567298,718.9000244140625,TARGET HIT,3091.0,CLOSED
+2026-01-28 14:54:41.982892,UPL.NS,LONG,714.5,527,712.6035766601562,718.29,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 08:35:24.569175,718.9000244140625,TARGET HIT,2318.8128662109375,CLOSED
+2026-01-28 15:02:28.514679,APOLLOHOSP.NS,LONG,6876.0,82,6863.946428571428,6900.11,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,,,,,OPEN
+2026-01-28 15:02:32.157310,UPL.NS,LONG,716.5,525,714.5982208251953,720.30,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 09:15:18.486594,706.6500244140625,SL HIT,-5171.2371826171875,CLOSED
+2026-01-28 15:04:04.565992,APOLLOHOSP.NS,LONG,6878.0,81,6865.732142857143,6902.54,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,,,,,OPEN
+2026-01-28 15:04:07.920033,UPL.NS,LONG,716.5999755859375,522,714.6874847412109,720.42,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 09:15:18.488732,706.6500244140625,SL HIT,-5193.87451171875,CLOSED
+2026-01-28 15:17:57.850915,LTIM.NS,LONG,6017.5,69,6003.142857142857,6046.21,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 08:35:14.709284,6000.0,SL HIT,-1207.5,CLOSED
+2026-01-28 15:19:27.112295,LTIM.NS,LONG,6013.5,69,5999.035714285715,6042.43,[SNIPER] AI Error (403 Your API key was reported as leaked. Please use another API key.) - Defaulting to Valid,2026-01-30 09:15:07.859250,5933.5,SL HIT,-5520.0,CLOSED
+2026-01-29 09:14:57.073896,NTPC.NS,LONG,349.0,28,348.0678591047014,350.86,"[SNIPER] AI Error (400 API key expired. Please renew the API key. [reason: ""API_KEY_INVALID""
+domain: ""googleapis.com""
+metadata {
+  key: ""service""
+  value: ""generativelanguage.googleapis.com""
+}
+, locale: ""en-US""
+message: ""API key expired. Please renew the API key.""
+]) - Defaulting to Valid",2026-01-30 08:35:18.168368,358.0,TARGET HIT,252.0,CLOSED
+2026-01-29 10:29:12.253489,KOTAKBANK.NS,LONG,410.2000122070313,24,408.6250141688756,413.35,"[SNIPER] AI Error (400 API key expired. Please renew the API key. [reason: ""API_KEY_INVALID""
+domain: ""googleapis.com""
+metadata {
+  key: ""service""
+  value: ""generativelanguage.googleapis.com""
+}
+, locale: ""en-US""
+message: ""API key expired. Please renew the API key.""
+]) - Defaulting to Valid",2026-01-31 09:20:09.051979,408.0,SL HIT,-52.80029296875136,CLOSED
+2026-01-29 11:47:35.464792,ICICIBANK.NS,LONG,1366.5,7,1363.982142857143,TRAIL EMA20,"[SURFER] This is a high-probability breakout setup. The overall context is highly bullish (Bias: BULLISH, RSI > 60, Price significantly above VWAP, and Volume confirming the move). The Narrow CPR structure further supports the anticipation of a strong trending day. Although the entry price (1366.5) is currently slightly below the CPR support (1368.96), the aggressive momentum indicators suggest immediate breakout intent.",2026-01-30 09:15:29.011431,1379.699951171875,TRAIL SL HIT,92.399658203125,CLOSED
+2026-01-29 11:48:12.635464,ICICIBANK.NS,LONG,1367.4000244140625,7,1364.80717250279,TRAIL EMA20,"[SURFER] This is a high-probability breakout setup. The Narrow CPR combined with a massive volume spike (nearly 2x Vol_SMA20) and strong RSI (66.92) confirms intense institutional interest and momentum alignment. Price is firmly above VWAP, supporting the BULLISH bias. The market structure strongly suggests a trending day.",2026-01-30 09:15:29.013954,1379.699951171875,TRAIL SL HIT,86.0994873046875,CLOSED
+2026-01-29 11:48:47.587180,ICICIBANK.NS,LONG,1367.4000244140625,7,1364.80717250279,TRAIL EMA20,"[SURFER] High probability setup. The confluence of a BULLISH bias, Narrow CPR, and extremely strong volume (Volume > 2x Vol_SMA20) confirms significant momentum and institutional interest, highly favoring a sustained trending move.",2026-01-30 09:15:29.015844,1379.699951171875,TRAIL SL HIT,86.0994873046875,CLOSED
+2026-01-30 08:35:14.046135,KOTAKBANK.NS,LONG,412.3999938964844,24,410.52499716622486,416.15,"[SNIPER] AI Error (400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'API key expired. Please renew the API key.', 'status': 'INVALID_ARGUMENT', 'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_INVALID', 'domain': 'googleapis.com', 'metadata': {'service': 'generativelanguage.googleapis.com'}}, {'@type': 'type.googleapis.com/google.rpc.LocalizedMessage', 'locale': 'en-US', 'message': 'API key expired. Please renew the API key.'}]}}) - Defaulting to Valid",2026-01-31 09:20:09.054552,408.0,SL HIT,-105.599853515625,CLOSED
+2026-01-30 08:35:22.251462,HDFCLIFE.NS,LONG,730.0,13,727.8142896379743,734.37,"[SNIPER] AI Error (400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'API key expired. Please renew the API key.', 'status': 'INVALID_ARGUMENT', 'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_INVALID', 'domain': 'googleapis.com', 'metadata': {'service': 'generativelanguage.googleapis.com'}}, {'@type': 'type.googleapis.com/google.rpc.LocalizedMessage', 'locale': 'en-US', 'message': 'API key expired. Please renew the API key.'}]}}) - Defaulting to Valid",,,,0.0,OPEN
+2026-01-30 09:05:18.211342,KOTAKBANK.NS,LONG,412.3999938964844,24,410.52499716622486,416.15,"[SNIPER] AI Error (400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'API key expired. Please renew the API key.', 'status': 'INVALID_ARGUMENT', 'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_INVALID', 'domain': 'googleapis.com', 'metadata': {'service': 'generativelanguage.googleapis.com'}}, {'@type': 'type.googleapis.com/google.rpc.LocalizedMessage', 'locale': 'en-US', 'message': 'API key expired. Please renew the API key.'}]}}) - Defaulting to Valid",2026-01-31 09:20:09.056601,408.0,SL HIT,-105.599853515625,CLOSED
+2026-01-30 09:05:25.733130,HDFCLIFE.NS,LONG,730.0,13,727.8142896379743,734.37,"[SNIPER] AI Error (400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'API key expired. Please renew the API key.', 'status': 'INVALID_ARGUMENT', 'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_INVALID', 'domain': 'googleapis.com', 'metadata': {'service': 'generativelanguage.googleapis.com'}}, {'@type': 'type.googleapis.com/google.rpc.LocalizedMessage', 'locale': 'en-US', 'message': 'API key expired. Please renew the API key.'}]}}) - Defaulting to Valid",,,,0.0,OPEN
+2026-01-30 09:24:06.526706,ITC.NS,LONG,319.8999938964844,31,318.8767776489258,321.95,"[SNIPER] AI Error (400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'API key expired. Please renew the API key.', 'status': 'INVALID_ARGUMENT', 'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_INVALID', 'domain': 'googleapis.com', 'metadata': {'service': 'generativelanguage.googleapis.com'}}, {'@type': 'type.googleapis.com/google.rpc.LocalizedMessage', 'locale': 'en-US', 'message': 'API key expired. Please renew the API key.'}]}}) - Defaulting to Valid",2026-01-31 09:20:08.035455,322.1499938964844,TARGET HIT,69.75,CLOSED

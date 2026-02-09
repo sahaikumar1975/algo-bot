@@ -18,18 +18,15 @@ import time
 # Import logic from strategy file
 from day_trading_strategy import calculate_cpr, add_rsi
 
-# List of Nifty 50 Stocks (Hardcoded for reliability if file missing)
+# Optimized Watchlist (Backtested Profitable on 9EMA Strict Strategy)
+# Filtered from Top 60 Stocks based on >40% Win Rate & Positive PnL
 NIFTY_50 = [
-    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
-    "HINDUNILVR.NS", "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "KOTAKBANK.NS",
-    "LTIM.NS", "AXISBANK.NS", "LT.NS", "BAJFINANCE.NS", "MARUTI.NS",
-    "ASIANPAINT.NS", "HCLTECH.NS", "TITAN.NS", "SUNPHARMA.NS", "TATASTEEL.NS",
-    "NTPC.NS", "ULTRACEMCO.NS", "POWERGRID.NS", "M&M.NS", "JSWSTEEL.NS",
-    "ADANIENT.NS", "ADANIPORTS.NS", "TATAMOTORS.NS", "WIPRO.NS", "COALINDIA.NS",
-    "ONGC.NS", "BAJAJFINSV.NS", "GRASIM.NS", "TECHM.NS", "HDFCLIFE.NS",
-    "BRITANNIA.NS", "HEROMOTOCO.NS", "INDUSINDBANK.NS", "CIPLA.NS", "DIVISLAB.NS",
-    "DRREDDY.NS", "UPL.NS", "SBILIFE.NS", "BAJAJ-AUTO.NS", "HINDALCO.NS",
-    "^NSEI", "^NSEBANK"  # Added Indices
+    'AMBUJACEM.NS', 'AXISBANK.NS', 'BAJAJ-AUTO.NS', 'BRITANNIA.NS', 'CHOLAFIN.NS', 
+    'DIVISLAB.NS', 'DRREDDY.NS', 'EICHERMOT.NS', 'HAVELLS.NS', 'HDFCBANK.NS', 
+    'HEROMOTOCO.NS', 'HINDALCO.NS', 'ICICIBANK.NS', 'INFY.NS', 'JINDALSTEL.NS', 
+    'LT.NS', 'LTIM.NS', 'MARUTI.NS', 'ONGC.NS', 'POWERGRID.NS', 'RELIANCE.NS', 
+    'SBICARD.NS', 'SBILIFE.NS', 'SBIN.NS', 'SHREECEM.NS', 'SIEMENS.NS',
+    '^NSEI', '^NSEBANK'  # Indices
 ]
 
 def download_with_retry(ticker, period, interval, retries=3):
@@ -53,14 +50,26 @@ def download_with_retry(ticker, period, interval, retries=3):
         raise last_exception
     return pd.DataFrame()
 
-def scan_stock(ticker):
+def scan_stock(ticker, broker=None):
     """
     Analyzes a single stock and returns its status.
     """
     try:
         # 1. Fetch Daily Data (Last 5 days is enough for CPR)
         # 1. Fetch Daily Data (Last 5 days is enough for CPR)
-        daily_df = download_with_retry(ticker, period='5d', interval='1d')
+        # Using shared fetch_data which handles retries and timeouts
+        from day_trading_strategy import fetch_data
+        
+        # fetch_data returns (daily, intraday)
+        # We just need daily here first, but might as well get both if optimized, 
+        # or we can modify scan_stock to use the tuple directly.
+        # However, scan_stock logic is split. Let's see.
+        
+        # Actually scanner calls download twice with different params. 
+        # fetch_data does both in one go. Let's maximize efficiency.
+        
+        daily_df, intraday_int_df = fetch_data(ticker, broker=broker)
+        
         if daily_df.empty or len(daily_df) < 2: return None
         
         # Clean columns
@@ -93,12 +102,8 @@ def scan_stock(ticker):
         is_narrow = cpr_width < (pivot * 0.005) # 0.5% Width
         
         # 5. Fetch Intraday Data (Current state)
-        # Fetch last 5 candles to check current price status
-        # 5. Fetch Intraday Data (Current state)
-        # Fetch last 5 candles to check current price status
-        intraday = download_with_retry(ticker, period='1d', interval='5m')
-        if isinstance(intraday.columns, pd.MultiIndex):
-            intraday.columns = intraday.columns.get_level_values(0)
+        # Reuse data from fetch_data call above
+        intraday = intraday_int_df
             
         if intraday.empty:
             return {
@@ -139,7 +144,7 @@ def scan_stock(ticker):
         print(f"Error scanning {ticker}: {e}")
         return None
 
-def run_scanner():
+def run_scanner(broker=None):
     print(f"--- Starting Market Scanner ({len(NIFTY_50)} Stocks) ---")
     print("Scanning for CPR Trends and Intraday Alignments...")
     
@@ -147,7 +152,7 @@ def run_scanner():
     
     # Run in parallel
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(scan_stock, t): t for t in NIFTY_50}
+        futures = {executor.submit(scan_stock, t, broker): t for t in NIFTY_50}
         for future in concurrent.futures.as_completed(futures):
             res = future.result()
             if res:

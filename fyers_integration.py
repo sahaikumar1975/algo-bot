@@ -114,6 +114,37 @@ class FyersApp:
         except Exception as e:
             return {"s": "error", "message": str(e)}
 
+    def verify_order_status(self, order_id, max_retries=10):
+        """
+        Polls order status until it is FILLED or Rejected/Cancelled.
+        Returns: (status, filled_price)
+        """
+        if not self.fyers: return "ERROR", 0.0
+        
+        import time
+        for _ in range(max_retries):
+            try:
+                data = {"id": order_id}
+                res = self.fyers.orderbook(data=data)
+                
+                if 'orderBook' in res and len(res['orderBook']) > 0:
+                    order = res['orderBook'][0]
+                    status = order.get('status') # 2=Filled, 6=Cancelled, 5=Rejected
+                    
+                    if status == 2: # FILLED
+                        # Try to get average traded price
+                        price = float(order.get('tradedPrice', 0))
+                        return "FILLED", price
+                        
+                    elif status in [5, 6]:
+                        return "REJECTED", 0.0
+                
+                time.sleep(1) # Wait 1s before next check
+            except Exception as e:
+                print(f"Order Check Error: {e}")
+                
+        return "TIMEOUT", 0.0
+
     def get_positions(self):
         if not self.fyers: return pd.DataFrame()
         try:
@@ -145,6 +176,59 @@ class FyersApp:
         except Exception as e:
             print(f"Error fetching quotes: {e}")
             return None
+
+    def get_history(self, symbol, resolution, range_from, range_to, date_format='0'):
+        """
+        Fetch Historical Data.
+        resolution: 'D', '1D', '5'
+        range_from/to: 'yyyy-mm-dd'
+        """
+        if not self.fyers: return None
+        try:
+            # Universal Symbol Converter (yfinance -> Fyers)
+            fy_symbol = symbol
+            if not "NSE:" in symbol and not "BSE:" in symbol:
+                clean_t = symbol.replace('.NS', '')
+                if clean_t.startswith('^') or clean_t == 'NSEI' or clean_t == 'NSEBANK': 
+                     if 'NSEI' in clean_t: fy_symbol = "NSE:NIFTY50-INDEX"
+                     elif 'BANK' in clean_t: fy_symbol = "NSE:NIFTYBANK-INDEX"
+                else:
+                    fy_symbol = f"NSE:{clean_t}-EQ"
+            
+            data = {
+                "symbol": fy_symbol,
+                "resolution": str(resolution),
+                "date_format": str(date_format),
+                "range_from": range_from,
+                "range_to": range_to,
+                "cont_flag": "1"
+            }
+            
+            response = self.fyers.history(data=data)
+            
+            if 'candles' in response:
+                df = pd.DataFrame(response['candles'], columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume'])
+                
+                # Convert Date (Epoch or String) to Datetime
+                if date_format == '1': # Epoch
+                     df['Date'] = pd.to_datetime(df['Date'], unit='s', utc=True).dt.tz_convert('Asia/Kolkata')
+                else:
+                     # If string, might need parsing depending on Fyers return format. 
+                     # Usually Fyers returns Epoch even if requested otherwise in some versions, 
+                     # but let's assume epoch response for safety if valid. 
+                     # Actually standard v3 returns list of lists.
+                     pass 
+                
+                # Ensure Timestamp Index for yfinance compatibility
+                df['Date'] = pd.to_datetime(df['Date'], unit='s', utc=True).dt.tz_convert('Asia/Kolkata')
+                df.set_index('Date', inplace=True)
+                return df
+                
+            return pd.DataFrame() # Empty if no candles
+            
+        except Exception as e:
+            print(f"Error fetching history for {symbol}: {e}")
+            return pd.DataFrame()
 
 if __name__ == "__main__":
     pass

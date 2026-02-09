@@ -18,7 +18,15 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import os
 import re
+import re
 from dotenv import load_dotenv
+import requests
+
+# Configure YFinance Session to avoid 404s
+session = requests.Session()
+session.headers.update({
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+})
 import yfinance as yf
 from fyers_integration import FyersApp
 import json
@@ -36,6 +44,24 @@ def get_local_ip():
     finally:
         s.close()
     return IP
+
+def get_ai_usage_count():
+    """Count AI calls made today from log file."""
+    count = 0
+    try:
+        log_file = "ai_usage_log.csv"
+        # Check in current dir
+        if os.path.exists(log_file):
+            with open(log_file, "r") as f:
+                lines = f.readlines()
+            
+            today_str = datetime.now().date().isoformat()
+            # Count lines starting with today's date
+            count = sum(1 for line in lines if line.startswith(today_str))
+    except Exception:
+        pass
+    return count
+
 
 # Load environment variables
 load_dotenv()
@@ -100,13 +126,15 @@ from swing_strategy import (
     get_swing_focus_sectors, get_top_stocks_by_sector
 )
 
-# Import Day Trading Modules
+
 # Import Day Trading Modules
 from day_trading_strategy import backtest_day_strategy
 from market_scanner import run_scanner, NIFTY_50
 from fyers_integration import FyersApp  # Added Fyers Integration
+from replay_simulation import ReplaySession # Replay Module
 import subprocess
 import time
+import plotly.graph_objects as go
 
 # Page configuration
 st.set_page_config(
@@ -137,6 +165,25 @@ st.markdown("""
     .negative { color: #ff6b6b; }
 </style>
 """, unsafe_allow_html=True)
+
+
+def safe_read_csv(filepath):
+    """Safely read CSV with locking/error handling."""
+    if not os.path.exists(filepath): return pd.DataFrame()
+    try:
+        # Retry mechanism for file lock contention
+        for _ in range(3):
+            try:
+                # Use verify to avoid bad lines crashing
+                return pd.read_csv(filepath, on_bad_lines='skip')
+            except pd.errors.EmptyDataError:
+                return pd.DataFrame()
+            except Exception:
+                time.sleep(0.1)
+        return pd.read_csv(filepath, on_bad_lines='skip')
+    except Exception as e:
+        st.error(f"Error reading {filepath}: {e}")
+        return pd.DataFrame()
 
 # --------------------------
 # SIDEBAR: Fyers Login
@@ -239,6 +286,22 @@ with st.sidebar.expander("🔐 Fyers Live Login", expanded=False):
         except:
             st.error("Could not detect IP")
 
+
+
+    # AI Usage Monitor
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🤖 AI Usage (Today)")
+    usage_count = get_ai_usage_count()
+    limit = 1500 # Gemini Flash Free Tier Limit
+    
+    # Color logic
+    bar_color = "green"
+    if usage_count > 1000: bar_color = "orange"
+    if usage_count > 1400: bar_color = "red"
+    
+    st.sidebar.progress(min(usage_count / float(limit), 1.0))
+    st.sidebar.caption(f"Calls: **{usage_count}** / {limit} (Free Tier)")
+
 st.sidebar.divider()
 
 
@@ -246,7 +309,7 @@ def load_nifty200():
     """Load Nifty 200 stock list."""
     csv_path = os.path.join(os.path.dirname(__file__), 'stocks', 'nifty200.csv')
     if os.path.exists(csv_path):
-        df = pd.read_csv(csv_path)
+        df = safe_read_csv(csv_path)
         if 'Symbol' in df.columns:
             return df['Symbol'].tolist()
     return []
@@ -542,11 +605,14 @@ def main():
     st.sidebar.title("Navigation")
     
     # Unified Navigation
+    # Unified Navigation
     page = st.sidebar.radio(
         "Modules",
         [
             "🤖 Live Bot Manager", 
+            "💰 Live Options PnL",
             "📜 Paper Trading P&L", 
+            "♻️ Replay Simulation (9EMA)",
             "📡 Intraday Scanner", 
             "🏭 Sector Analysis",
             "⚡ Backtest Day Strategy", 
@@ -554,6 +620,63 @@ def main():
         ],
         key="nav_radio"
     )
+
+    # --- LIVE OPTIONS PNL PAGE ---
+    if page == "💰 Live Options PnL":
+        st.header("💰 Live Options Dashboard")
+        st.markdown("*Real-time monitoring of Nifty & BankNifty Option Trades*")
+        
+        if st.button("🔄 Refresh Data"):
+            st.rerun()
+            
+        trade_log_path = "trade_log.csv"
+        if os.path.exists(trade_log_path):
+            try:
+                df = safe_read_csv(trade_log_path)
+                if not df.empty:
+                    # Filter for Indices
+                    df['Time'] = pd.to_datetime(df['Time'])
+                    df = df[df['Ticker'].str.startswith('^')]
+                    
+                    # Today's filter
+                    today = datetime.now().date()
+                    df_today = df[df['Time'].dt.date == today]
+                    
+                    # Metrics
+                    total_pnl = df_today['PnL'].sum()
+                    win_count = len(df_today[df_today['PnL'] > 0])
+                    loss_count = len(df_today[df_today['PnL'] < 0])
+                    trades_count = len(df_today)
+                    
+                    # Display Metrics
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Today's PnL", f"₹{total_pnl:.2f}", delta_color="normal" if total_pnl >= 0 else "inverse")
+                    c2.metric("Total Trades", trades_count)
+                    c3.metric("Wins", win_count, delta_color="normal")
+                    c4.metric("Losses", loss_count, delta_color="inverse")
+                    
+                    # Active Positions
+                    st.subheader("🔴 Active Positions")
+                    active = df_today[df_today['Status'] == 'OPEN']
+                    if not active.empty:
+                        st.dataframe(active[['Time', 'Ticker', 'Signal', 'Entry_Price', 'Qty', 'SL', 'Target', 'Notes']])
+                    else:
+                        st.info("No Open Positions.")
+                        
+                    # Closed Positions
+                    st.subheader("📜 Closed Trades (Today)")
+                    closed = df_today[df_today['Status'] == 'CLOSED'].sort_values('Exit_Time', ascending=False)
+                    if not closed.empty:
+                        st.dataframe(closed[['Time', 'Ticker', 'Signal', 'Exit_Reason', 'PnL', 'Entry_Price', 'Exit_Price']])
+                    else:
+                        st.info("No Closed Trades yet.")
+                        
+                else:
+                    st.warning("Trade Log is empty.")
+            except Exception as e:
+                st.error(f"Error reading log: {e}")
+        else:
+            st.warning("Trade Log not found (No trades executed yet).")
 
     # Load stock list
     nifty200 = load_nifty200()
@@ -567,6 +690,127 @@ def main():
         st.session_state.screener_results = []
     if 'selected_stock_for_analysis' not in st.session_state:
         st.session_state.selected_stock_for_analysis = None
+    if 'replay_session' not in st.session_state:
+        st.session_state.replay_session = None
+
+    # --- REPLAY SIMULATION PAGE ---
+    if page == "♻️ Replay Simulation (9EMA)":
+        st.header("♻️ Strategy Replay Simulation")
+        st.markdown("*Interactive Candle-by-Candle Replay of the 9EMA Strategy*")
+        
+        # Controls
+        col1, col2, col3 = st.columns([1,1,2])
+        with col1:
+             ticker_select = st.selectbox("Select Ticker", ["^NSEI", "^NSEBANK"], key="rep_ticker")
+        with col2:
+             days_select = st.number_input("Days to Load", min_value=1, max_value=10, value=2, key="rep_days")
+        with col3:
+             if st.button("🔄 Initialize / Reset Simulation"):
+                 st.session_state.replay_session = ReplaySession(ticker_select, days_select)
+                 st.success("Simulation Initialized!")
+                 st.rerun()
+
+        # Interface
+        if st.session_state.replay_session:
+            session = st.session_state.replay_session
+            state = session.get_state()
+            
+            if state:
+                # Top Metrics
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Balance", f"₹{state['balance']:.2f}")
+                m2.metric("Open PnL", f"₹{state['open_pnl']:.2f}", delta_color="normal" if state['open_pnl']>=0 else "inverse")
+                m3.metric("Price", f"{state['price']:.2f}")
+                m4.metric("Position", state['position'])
+                
+                # Alerts
+                if state['alert_bull']:
+                    st.info("👀 **BULLISH ALERT CANDLE**: High is floating BELOW 9EMA. Look for BUY.")
+                elif state['alert_bear']:
+                    st.warning("👀 **BEARISH ALERT CANDLE**: Low is floating ABOVE 9EMA. Look for SELL.")
+                
+                # Signal
+                if state['signal']:
+                     sig = state['signal']
+                     st.error(f"🚀 **SIGNAL TRIGGERED**: {sig['Signal']} @ {sig['Entry']} (SL {sig['SL']})")
+                
+                # Actions
+                c1, c2, c3, c4 = st.columns(4)
+                if c1.button("⏭️ Next Candle"):
+                    if session.next_candle():
+                        st.rerun()
+                    else:
+                        st.warning("End of Data.")
+                
+                if c2.button("⏩ Skip 10"):
+                     for _ in range(10): session.next_candle()
+                     st.rerun()
+                     
+                if state['position'] == 'FLAT':
+                    if c3.button("🟢 BUY (Long)"):
+                        session.execute_trade('LONG')
+                        st.rerun()
+                    if c4.button("🔴 SELL (Short)"):
+                        session.execute_trade('SHORT')
+                        st.rerun()
+                else:
+                    if c3.button("⏹️ Close Position"):
+                        session.position = 0 
+                        session.log("Manual Exit")
+                        st.rerun()
+
+                # Log View
+                st.subheader("Event Log")
+                st.text_area("Logs", "\n".join(session.message_log), height=300)
+
+                # --- CHART VISUALIZATION ---
+                st.subheader("📈 Simulation Chart")
+                
+                # Get visible data (upto current index) - Show last 50 candles context
+                # ReplaySession needs to expose data access or we add a method
+                # Accessing internal data directly for UI is acceptable here
+                
+                start_idx = max(0, session.current_index - 50)
+                end_idx = session.current_index + 1
+                chart_data = session.data.iloc[start_idx:end_idx]
+                
+                fig = go.Figure()
+                
+                # Candlestick
+                fig.add_trace(go.Candlestick(
+                    x=chart_data.index,
+                    open=chart_data['Open'],
+                    high=chart_data['High'],
+                    low=chart_data['Low'],
+                    close=chart_data['Close'],
+                    name='Price'
+                ))
+                
+                # 9EMA
+                fig.add_trace(go.Scatter(
+                    x=chart_data.index,
+                    y=chart_data['EMA9'],
+                    line=dict(color='blue', width=1),
+                    name='9 EMA'
+                ))
+                
+                # Markers for signals could be added, but basics first.
+                
+                fig.update_layout(
+                    title=f'{ticker_select} Replay ({chart_data.index[-1]})',
+                    yaxis_title='Price',
+                    xaxis_rangeslider_visible=False,
+                    height=500
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+            else:
+                st.warning("No Data or End of Stream.")
+        else:
+            st.info("Click Initialize to start.")
+            
+        st.markdown("---")
         
     # --- DAY TRADING PAGES ---
     if page == "🤖 Live Bot Manager":
@@ -614,6 +858,62 @@ def main():
                 else:
                     st.error("Please enter a valid key.")
 
+            # Load Config for Bypass Setting
+            config = load_config()
+            ai_bypass_default = config.get("ALLOW_AI_BYPASS", False)
+            
+            allow_bypass = st.checkbox("✅ Bypass AI if Rate Limited / Error?", value=ai_bypass_default, help="If checked, the bot will execute trades based on Technicals only if the AI fails or hits a rate limit.")
+            
+            if allow_bypass != ai_bypass_default:
+                config["ALLOW_AI_BYPASS"] = allow_bypass
+                with open(CONFIG_FILE, 'w') as f:
+                     json.dump(config, f, indent=4)
+                st.success(f"Updated AI Bypass Policy: {'Enabled' if allow_bypass else 'Disabled'}")
+
+            # AI Connectivity Test
+            if st.button("📡 Test Connectivity"):
+                try:
+                    from google import genai
+                    
+                    if not api_key:
+                        st.error("❌ API Key empty from .env")
+                    else:
+                        st.info("Attempting to connect to Gemini...")
+                        client = genai.Client(api_key=api_key)
+                        
+                        # New SDK generate_content
+                        response = client.models.generate_content(
+                            model='gemini-2.0-flash-lite-001', 
+                            contents="Hello, are you active?"
+                        )
+                        st.success(f"✅ AI Connected! Response: {response.text}")
+                except ImportError:
+                     st.error("❌ 'google-genai' package missing. Run: pip install google-genai")
+                except Exception as e:
+                    st.error(f"❌ Connection Failed: {e}")
+                    if "404" in str(e) or "NOT_FOUND" in str(e):
+                         st.warning("🔍 Model not found. Attempting to list available models...")
+                         try:
+                             # Attempt to list models using the client
+                             # Re-instantiate if needed (though client should be available if 404 happened during generation)
+                             if 'client' not in locals():
+                                 from google import genai
+                                 client = genai.Client(api_key=api_key)
+                             
+                             pager = client.models.list()
+                             available_models = []
+                             for m in pager:
+                                 # Safely get name, ignoring attributes that might not exist
+                                 name = getattr(m, 'name', None)
+                                 if name:
+                                     available_models.append(name)
+                                     
+                             st.write("### ✅ Available Models for your Key:")
+                             st.code("\n".join(sorted(available_models)))
+                             st.info("Please tell the AI Assistant which model name you see above.")
+                         except Exception as list_err:
+                             st.error(f"Could not list models: {list_err}")
+
             if saved_key:
                 st.caption("✅ Key is loaded from .env")
             else:
@@ -660,7 +960,7 @@ def main():
         st.subheader("📊 Market Condition (Indices)")
         if os.path.exists("daily_scan_results.csv"):
             try:
-                res_df = pd.read_csv("daily_scan_results.csv")
+                res_df = safe_read_csv("daily_scan_results.csv")
                 
                 # Extract Index Trends
                 nifty = res_df[res_df['Ticker'] == '^NSEI']
@@ -670,7 +970,7 @@ def main():
                 
                 with m1:
                     trend = "NEUTRAL"
-                    if not nifty.empty: trend = nifty.iloc[0]['Trend']
+                    if not nifty.empty and 'Trend' in nifty.columns: trend = nifty.iloc[0]['Trend']
                     color = "off"
                     if trend == "BULLISH": color = "normal" 
                     elif trend == "BEARISH": color = "inverse"
@@ -678,7 +978,7 @@ def main():
                     
                 with m2:
                     trend = "NEUTRAL"
-                    if not banknifty.empty: trend = banknifty.iloc[0]['Trend']
+                    if not banknifty.empty and 'Trend' in banknifty.columns: trend = banknifty.iloc[0]['Trend']
                     color = "off"
                     if trend == "BULLISH": color = "normal"
                     elif trend == "BEARISH": color = "inverse"
@@ -692,15 +992,16 @@ def main():
         st.subheader("📋 Stocks Under Scanner")
         if os.path.exists("daily_scan_results.csv"):
             try:
-                res_df = pd.read_csv("daily_scan_results.csv")
-                # Filter out indices for this view
-                stocks_only = res_df[~res_df['Ticker'].str.startswith('^')]
-                
-                if not stocks_only.empty:
-                    st.caption(f"Found {len(stocks_only)} stocks matching criteria.")
-                    st.dataframe(stocks_only, use_container_width=True)
-                else:
-                    st.info("No stocks matched the scanner criteria today.")
+                res_df = safe_read_csv("daily_scan_results.csv")
+                if not res_df.empty and 'Ticker' in res_df.columns:
+                    # Filter out indices for this view
+                    stocks_only = res_df[~res_df['Ticker'].str.startswith('^', na=False)]
+                    
+                    if not stocks_only.empty:
+                        st.caption(f"Found {len(stocks_only)} stocks matching criteria.")
+                        st.dataframe(stocks_only, width='stretch')
+                    else:
+                        st.info("No stocks matched the scanner criteria today.")
             except Exception as e:
                 st.error(f"Error reading scanner results: {e}")
 
@@ -754,12 +1055,20 @@ def main():
                 if error_found:
                     st.error(f"⚠️ Bot Reported an Error Recently:\n{latest_error}")
 
-        st.subheader("📝 Live Logs (bot.log)")
+        col_log, col_ref = st.columns([3, 1])
+        with col_log:
+            st.subheader("📝 Live Logs (bot.log)")
+        with col_ref:
+            # Auto-Refresh Toggle
+            if st.checkbox("🔄 Auto-Stream Logs (2s)", key="log_stream"):
+                time.sleep(2)
+                st.rerun()
+
         if os.path.exists("bot.log"):
             with open("bot.log", "r") as f:
                 logs = f.readlines()
-                # Show last 20 lines
-                st.code("".join(logs[-20:]))
+                # Show last 50 lines for better context
+                st.code("".join(logs[-50:]))
         else:
             st.info("No logs found yet.")
             
@@ -1195,7 +1504,7 @@ def main():
                         'Momentum': get_sector_momentum_score(s)
                     } for s in sector_perf])
 
-                    st.dataframe(sector_df, use_container_width=True, hide_index=True)
+                    st.dataframe(sector_df, width='stretch', hide_index=True)
 
                     # =====================================
                     # SECTOR HEATMAP
@@ -1265,7 +1574,7 @@ def main():
                                 '3M Return': f"{s['3m_return']:+.1f}%"
                             } for s in top_stocks])
 
-                            st.dataframe(top_df, use_container_width=True, hide_index=True)
+                            st.dataframe(top_df, width='stretch', hide_index=True)
 
                             # Quick add to watchlist
                             col1, col2 = st.columns([1, 3])
@@ -1323,15 +1632,17 @@ def main():
                     st.subheader("💡 Swing Trading Recommendations")
 
                     if focus_sectors:
-                        st.markdown("Based on sector analysis, here are the recommendations:")
-
-                        for i, sector in enumerate(focus_sectors[:3], 1):
+                        for i, sector in enumerate(focus_sectors):
                             with st.expander(f"#{i} {sector['sector']} - {sector['momentum']}", expanded=(i==1)):
+                                s3_str = f"{sector['avg_3m_return']:.1f}"
+                                s1m_str = f"{sector['avg_1m_return']:+.1f}"
+                                s1w_str = f"{sector['avg_1w_return']:+.1f}"
+                                
                                 st.markdown(f"""
                                 **Sector Stats:**
-                                - 3-Month Return: **{sector['avg_3m_return']:.1f}%**
-                                - 1-Month Return: {sector['avg_1m_return']:+.1f}%
-                                - 1-Week Return: {sector['avg_1w_return']:+.1f}%
+                                - 3-Month Return: **{s3_str}%**
+                                - 1-Month Return: {s1m_str}%
+                                - 1-Week Return: {s1w_str}%
                                 - Number of Stocks: {sector['stock_count']}
 
                                 **Trading Strategy:**
@@ -1339,14 +1650,14 @@ def main():
 
                                 if 'Bullish' in sector['momentum']:
                                     st.success("""
-                                    ✅ **FOCUS SECTOR** - Look for pullback entries
+                                    **[FOCUS SECTOR]** - Look for pullback entries
                                     - Wait for stocks to pull back to SMA21
                                     - Enter when RSI is between 40-55
                                     - Use the Stock Screener to find specific signals
                                     """)
                                 else:
                                     st.warning("""
-                                    👁️ **WATCH SECTOR** - Wait for better entry
+                                    **[WATCH SECTOR]** - Wait for better entry
                                     - Momentum is weakening
                                     - Consider waiting for RSI oversold bounce
                                     - Monitor for trend reversal
@@ -1388,7 +1699,7 @@ def main():
                 'Momentum': get_sector_momentum_score(s)
             } for s in sector_perf])
 
-            st.dataframe(sector_df, use_container_width=True, hide_index=True)
+            st.dataframe(sector_df, width='stretch', hide_index=True)
 
 if __name__ == '__main__':
     main()

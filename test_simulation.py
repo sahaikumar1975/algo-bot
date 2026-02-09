@@ -8,9 +8,9 @@ from unittest.mock import MagicMock
 # Setup Logging to Console
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-print("--- STARTING SIMULATION TEST ---")
+print("--- STARTING 9EMA SIMULATION TEST ---")
 print("1. Mocking Fyers connection (Paper Trading Mode)")
-print("2. Mocking Market Data (Forcing a BULLISH Setup)")
+print("2. Mocking Market Data (Forcing a 9EMA BUY Setup)")
 print("3. Checking if Signal triggers AI and Logging")
 
 # Import the bot module
@@ -28,46 +28,61 @@ live_bot.broker = None
 live_bot.TRADE_LOG = "simulation_trade_log.csv" # Separate log file
 
 # 2. Mock Data Generator
-def mock_fetch_data(ticker):
+def mock_fetch_data(ticker, broker=None):
     print(f"   -> Mocking Data Fetch for {ticker}...")
     
     # Create Dummy Dates
     dates_daily = pd.date_range(end=datetime.now().date(), periods=5)
     dates_intra = pd.date_range(end=datetime.now(), periods=50, freq='5min')
     
-    # DAILY DATA (For CPR)
-    # Pivot = (H+L+C)/3
-    # We want Narrow CPR? Not strictly checked in check_for_signals logic (it uses 'trend' bias passed in), 
-    # but let's make it normal.
+    # DAILY DATA
     daily_df = pd.DataFrame({
         'Open': [100]*5, 'High': [105]*5, 'Low': [95]*5, 'Close': [101]*5, 'Volume': [1000]*5
     }, index=dates_daily)
     
-    # INTRADAY DATA (For Signal)
-    # Scenario: BULLISH
-    # Price > VWAP
-    # RSI > 60 (Cross)
-    # Volume > SMA20
+    # INTRADAY DATA (For 9EMA Signal)
+    # Scenario: 9EMA BUY SETUP
+    # We need EMA9 to be well above the Alert Candle High.
     
     df = pd.DataFrame(index=dates_intra)
-    df['Open'] = 100.0
-    df['High'] = 102.0
-    df['Low'] = 99.0
-    df['Close'] = 101.0 # Will be Price
-    df['Volume'] = 10000 # Base Volume
     
+    # Generate a Downtrend so EMA is high
+    # Prices dropping from 110 to 102
+    prices = np.linspace(110, 102, 48).tolist()
     
-    # Generate prices: Flat then SUDDEN Spike to trigger RSI Cross > 60 at the very end
-    # Flat 100 for 49 candles -> RSI ~50
-    # Then 100 -> 105 spike -> RSI jumps > 60
+    # Candle -2 (Alert Candle):
+    # Needs High < EMA9.
+    # If EMA is trailing around 102+, let's make Alert Candle Low.
+    prices.append(100.0) # Index -2 close
     
-    prices = [100.0] * 48 + [100.0, 105.0] # 50 candles
+    # Candle -1 (Trigger Candle):
+    # Needs to break High of Alert.
+    prices.append(101.0) # Index -1 close
+    
     df['Close'] = prices
-    df['High'] = [p + 2.0 for p in prices] # Ensure High is higher for CPR logic
-    df['Low'] = [p - 2.0 for p in prices]
+    df['Open'] = prices 
+    df['High'] = [p + 0.5 for p in prices] # Wicks
+    df['Low'] = [p - 0.5 for p in prices]
+    df['Volume'] = 10000 
     
-    # SPIKE VOLUME on the last candle to satisfy Vol > SMA20
-    df.iloc[-1, df.columns.get_loc('Volume')] = 50000 # 5x average
+    # FORCE SPECIFICS
+    
+    # Alert Candle (Index -2)
+    # High = 100.5
+    # Low = 99.5
+    # Close = 100.0
+    # EMA should be > 100.5. (Likely is, given previous prices 102+)
+    df.iloc[-2, df.columns.get_loc('High')] = 100.5
+    df.iloc[-2, df.columns.get_loc('Low')] = 99.5
+    df.iloc[-2, df.columns.get_loc('Close')] = 100.0
+    
+    # Trigger Candle (Index -1)
+    # High = 101.5 (Breaks 100.5)
+    # Low = 100.8
+    # Close = 101.0
+    df.iloc[-1, df.columns.get_loc('High')] = 101.5
+    df.iloc[-1, df.columns.get_loc('Low')] = 100.8
+    df.iloc[-1, df.columns.get_loc('Close')] = 101.0
     
     return daily_df, df
 
@@ -79,7 +94,7 @@ live_bot.fetch_data = mock_fetch_data
 # Create a Watchlist with a Mock Stock
 watchlist = [
     {'ticker': 'SIM_STOCK', 'trend': 'BULLISH'},
-    {'ticker': '^NSEI', 'trend': 'NEUTRAL'} # Index to ignore or test
+    {'ticker': '^NSEI', 'trend': 'NEUTRAL'} 
 ]
 
 print("\n--- RUNNING CHECK_FOR_SIGNALS ---")
@@ -98,15 +113,7 @@ if os.path.exists("simulation_trade_log.csv"):
     df = pd.read_csv("simulation_trade_log.csv")
     if not df.empty:
         print(f"✅ Trade Log Created! Found {len(df)} trades.")
-        print(df[['Time', 'Ticker', 'Signal', 'Entry_Price', 'Notes']].tail())
-        
-        # Check if AI was called
-        last_note = df.iloc[-1]['Notes']
-        if "[SNIPER]" in last_note or "[SURFER]" in last_note:
-            print("✅ AI Validation Success (Mode returned).")
-        else:
-            print(f"⚠️  AI Response might be missing/generic: {last_note}")
-            
+        print(df[['Time', 'Ticker', 'Signal', 'Entry_Price', 'SL', 'Target']].to_string())
     else:
         print("❌ Trade Log exists but is empty. Signal Logic didn't trigger?")
 else:
