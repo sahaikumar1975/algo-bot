@@ -133,24 +133,42 @@ def check_3_candle_setup(df_slice, sl_method='CLUSTER', limit_buffer=5.0):
     if len(df_slice) < 4: return None
     
     # Candles: 0-2 (Cluster), 3 (Current)
+    # Candles: 0-2 (Cluster), 3 (Current)
+    # We need Previous Candle (c_prev) to ensure Fresh Cross
+    if len(df_slice) < 5: return None
+    
+    c_prev = df_slice.iloc[-5]
     c1 = df_slice.iloc[-4]
     c2 = df_slice.iloc[-3]
     c3 = df_slice.iloc[-2]
     curr = df_slice.iloc[-1]
     
-    # Intraday Check: Ensure all candles are from TODAY
+    # Intraday Check: Ensure all candles are from TODAY (User Request)
     try:
-        if not (c1.name.date() == c2.name.date() == c3.name.date() == curr.name.date()):
+        # Convert timestamp to date for comparison
+        d1 = c1.name.date()
+        d2 = c2.name.date()
+        d3 = c3.name.date()
+        d4 = curr.name.date()
+        
+        if not (d1 == d2 == d3 == d4):
             return None
-    except: pass
+    except Exception as e:
+        # logging.warning(f"Date check error: {e}")
+        pass
 
     if pd.isna(c1['EMA9']) or pd.isna(c2['EMA9']) or pd.isna(c3['EMA9']): return None
 
     # --- BUY SETUP (CE) ---
+    # 1. Fresh Cross: C1 crosses UP (Open < EMA, Close > EMA)
+    # 2. Previous Candle must be BELOW EMA (to ensure it's a fresh move)
     c1_crossover = c1['Open'] < c1['EMA9'] and c1['Close'] > c1['EMA9']
+    prev_below = c_prev['Close'] < c_prev['EMA9']
+    # If c1 opened below, prev close likely below, but checking explicitly is safer
+    
     all_above = c1['Close'] > c1['EMA9'] and c2['Close'] > c2['EMA9'] and c3['Close'] > c3['EMA9']
     
-    if c1_crossover and all_above:
+    if c1_crossover and prev_below and all_above:
         reds = [c for c in [c1, c2, c3] if c['Close'] < c['Open']]
         
         if len(reds) >= 1:
@@ -169,10 +187,14 @@ def check_3_candle_setup(df_slice, sl_method='CLUSTER', limit_buffer=5.0):
                  return {'Signal': 'LONG', 'Entry': entry_level, 'SL': sl, 'Time': curr.name}
                  
     # --- SELL SETUP (PE) ---
+    # 1. Fresh Cross: C1 crosses DOWN (Open > EMA, Close < EMA)
+    # 2. Previous Candle must be ABOVE EMA
     c1_cross_sell = c1['Open'] > c1['EMA9'] and c1['Close'] < c1['EMA9']
+    prev_above = c_prev['Close'] > c_prev['EMA9']
+    
     all_below = c1['Close'] < c1['EMA9'] and c2['Close'] < c2['EMA9'] and c3['Close'] < c3['EMA9']
     
-    if c1_cross_sell and all_below:
+    if c1_cross_sell and prev_above and all_below:
         greens = [c for c in [c1, c2, c3] if c['Close'] > c['Open']]
         
         if len(greens) >= 1:
@@ -197,32 +219,149 @@ def backtest_day_strategy(ticker, initial_capital=100000, risk_per_trade=0.01, m
     daily_df, intraday_df = fetch_data(ticker)
     if daily_df.empty or intraday_df.empty: return []
 
-    daily_df = calculate_cpr(daily_df)
-    intraday_df = add_rsi(intraday_df)
+    # Calculate Indicators
+    intraday_df = calculate_9ema(intraday_df)
     
-    # Simplified Merge
-    intraday_df['Date'] = intraday_df.index.normalize()
-    daily_df['Date'] = daily_df.index.normalize()
-    merged = pd.merge_asof(intraday_df.sort_index(), daily_df[['Date','Pivot','BC','TC']].sort_values('Date'), on='Date', direction='backward')
-    merged.index = intraday_df.index
-    intraday_df = merged
-
     trades = []
     capital = initial_capital
-    position = 0
+    
+    # Track trades per day
+    daily_trade_counts = {} # {date_str: count}
+    MAX_TRADES_PER_DAY = 2 # Hardcoded per requirement or config
+    
+    # State
+    position = 0 # 0=Flat, 1=Long, -1=Short
     entry_price = 0
     sl = 0
-    qty = 0
+    target = 0
+    entry_time = None
     
-    for i in range(1, len(intraday_df)):
+    # Iterate candle by candle
+    # Need at least 4 candles for setup
+    for i in range(4, len(intraday_df)):
         curr = intraday_df.iloc[i]
-        prev = intraday_df.iloc[i-1]
-        ts = curr.name
+        curr_time = curr.name
+        curr_date_str = curr_time.strftime('%Y-%m-%d')
         
-        # ... (Abbreviated Stock Strategy Logic for brevity, real implementation should have full logic if used)
-        # Assuming for now we just need the function signature to not crash app.py
-        pass
+        # 1. Manage Open Position
+        if position != 0:
+            exit_reason = None
+            exit_price = 0
+            
+            # Check OHLC of CURRENT candle for SL/Target fill
+            # Optimistic/Pessimistic assumption: 
+            # If SL hit in candle, we exit at SL. If Target hit, exit at Target.
+            # If both hit? worst case SL.
+            
+            low = curr['Low']
+            high = curr['High']
+            close = curr['Close']
+            
+            if position == 1: # Long
+                if low <= sl: 
+                    exit_reason = "SL Hit"
+                    exit_price = sl
+                elif strategy_mode == 'SNIPER' and high >= target:
+                    exit_reason = "Target Hit"
+                    exit_price = target
+                # HYBRID EXIT for Sniper: Also check 9EMA Trail
+                elif strategy_mode == 'SNIPER' and close < curr['EMA9']:
+                    exit_reason = "Trailing Exit (Close < 9EMA)"
+                    exit_price = close
+                elif strategy_mode == 'SURFER' and close < curr['EMA9']:
+                    exit_reason = "Trailing Exit (Close < 9EMA)"
+                    exit_price = close
+                elif curr_time.hour >= 15 and curr_time.minute >= 15: # EOD
+                     exit_reason = "EOD Square Off"
+                     exit_price = close
+                     
+            elif position == -1: # Short
+                if high >= sl:
+                    exit_reason = "SL Hit"
+                    exit_price = sl
+                elif strategy_mode == 'SNIPER' and low <= target:
+                    exit_reason = "Target Hit"
+                    exit_price = target
+                # HYBRID EXIT for Sniper: Also check 9EMA Trail
+                elif strategy_mode == 'SNIPER' and close > curr['EMA9']:
+                    exit_reason = "Trailing Exit (Close > 9EMA)"
+                    exit_price = close
+                elif strategy_mode == 'SURFER' and close > curr['EMA9']:
+                    exit_reason = "Trailing Exit (Close > 9EMA)"
+                    exit_price = close
+                elif curr_time.hour >= 15 and curr_time.minute >= 15:
+                     exit_reason = "EOD Square Off"
+                     exit_price = close
+            
+            if exit_reason:
+                pnl = (exit_price - entry_price) * (1 if position == 1 else -1)
+                trades.append({
+                    'Entry Time': entry_time,
+                    'Exit Time': curr_time,
+                    'Signal': 'LONG' if position == 1 else 'SHORT',
+                    'Entry': entry_price,
+                    'Exit': exit_price,
+                    'PnL': pnl,
+                    'Reason': exit_reason,
+                    'Mode': strategy_mode
+                })
+                position = 0
+                entry_price = 0
+                sl = 0
+                target = 0
+                entry_time = None
+                continue # Trade closed, move to next candle
                 
+        # 2. Check for New Entry (If Flat)
+        # Check Limits
+        day_trades = daily_trade_counts.get(curr_date_str, 0)
+        if day_trades >= MAX_TRADES_PER_DAY: continue
+        
+        # Check Time (No new trades after 3:00 PM)
+        if curr_time.hour >= 15: continue
+        
+        # Check Signal using LAST 4 candles (Ending at i)
+        # i is current candle (forming or closed?). In backtest loop, 'curr' is the candle at index i.
+        # check_3_candle_setup expects a slice where the last candle is the 'current' one.
+        # We use [i-3 : i+1] to get 4 candles: i-3, i-2, i-1, i
+        
+        df_slice = intraday_df.iloc[i-3 : i+1]
+        
+        # Use SL Method 'REF' as per Live Bot Stock Logic
+        signal_data = check_3_candle_setup(df_slice, sl_method='REF', limit_buffer=0.0)
+        
+        if signal_data:
+            signal_type = signal_data['Signal']
+            limit_entry = signal_data['Entry'] # We enter if price crosses this
+            stop_loss = signal_data['SL']
+            
+            # Entry Logic:
+            # We are at candle 'i'. The signal is based on i (Current) breaking High/Low of prev candles?
+            # Wait, check_3_candle_setup logic: 
+            # "if curr['Close'] > entry_level" -> It checks if the CURRENT candle closed above entry.
+            # If so, we assume we entered AT THE CLOSE of this candle? 
+            # Or we assume we entered the moment it crossed? 
+            # For simplicity in 5m backtest: Enter at CLOSE of Signal Candle if condition met.
+            
+            # If signal returned, it means condition MET.
+            entry_p = curr['Close'] # Market order at close check
+            # Or use the specific Entry Level? 
+            # Let's use Close to be safe/realistic for "Close > Level" confirmation.
+            
+            risk = abs(entry_p - stop_loss)
+            if risk == 0: continue
+            
+            target_p = entry_p + (risk * 2 * (1 if signal_type == 'LONG' else -1))
+            
+            position = 1 if signal_type == 'LONG' else -1
+            entry_price = entry_p
+            sl = stop_loss
+            target = target_p
+            entry_time = curr_time
+            
+            # Increment daily count
+            daily_trade_counts[curr_date_str] = day_trades + 1
+            
     return trades
 
     return None

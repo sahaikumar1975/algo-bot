@@ -1,37 +1,24 @@
 import pandas as pd
 import os
 
-TRADE_LOG = "/Users/sahaikumar/Projects/SMA2150/trade_log.csv"
-
-TRADE_COLUMNS = ['Time', 'Ticker', 'Signal', 'Entry_Price', 'Qty', 'SL', 'Target', 'Notes', 'Exit_Time', 'Exit_Price', 'Exit_Reason', 'PnL', 'Status']
+TRADE_LOG = "trade_log.csv"
+NEW_COLS = ['Charges', 'Net_PnL']
 
 if os.path.exists(TRADE_LOG):
-    try:
-        df = pd.read_csv(TRADE_LOG)
-        print(f"Original columns: {df.columns.tolist()}")
-        
-        # Migration Logic
-        # 1. Rename 'Price' to 'Entry_Price' if it exists
-        if 'Price' in df.columns and 'Entry_Price' not in df.columns:
-            df.rename(columns={'Price': 'Entry_Price'}, inplace=True)
+    df = pd.read_csv(TRADE_LOG)
+    print("Old Columns:", df.columns.tolist())
+    
+    migrated = False
+    for col in NEW_COLS:
+        if col not in df.columns:
+            df[col] = 0.0
+            migrated = True
             
-        # 2. Add missing columns
-        for col in TRADE_COLUMNS:
-            if col not in df.columns:
-                df[col] = None
-                
-        # 3. Fill Status for old trades
-        if 'Status' in df.columns:
-            df['Status'].fillna('OPEN', inplace=True)
-            
-        # Reorder
-        df = df[TRADE_COLUMNS]
-        
-        # Save back
+    if migrated:
         df.to_csv(TRADE_LOG, index=False)
-        print("Migration successful. file saved.")
-        
-    except Exception as e:
-        print(f"Migration failed: {e}")
+        print("✅ MIGRATION SUCCESS! Added Charges/Net_PnL columns.")
+        print("New Columns:", df.columns.tolist())
+    else:
+        print("No migration needed.")
 else:
-    print("No trade_log.csv found.")
+    print("Trade Log not found.")

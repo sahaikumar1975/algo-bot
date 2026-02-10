@@ -1128,7 +1128,16 @@ def main():
                     else:
                         # Metrics
                         total_trades = len(df)
+                        # Gross Realized
                         realized_pnl = df[df['Status'] == 'CLOSED']['PnL'].sum() if 'PnL' in df.columns else 0.0
+                        
+                        # Charges & Net
+                        if 'Charges' in df.columns:
+                            total_charges = df['Charges'].sum()
+                            net_realized_pnl = realized_pnl - total_charges
+                        else:
+                            total_charges = 0.0
+                            net_realized_pnl = realized_pnl
                     
                     # --- DYNAMIC PNL CALCULATION ---
                     # Identify Open Trades
@@ -1242,21 +1251,22 @@ def main():
                     wins = len(df[df['PnL'] > 0]) if 'PnL' in df.columns else 0
                     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
                     
-                    col1, col2, col3, col4 = st.columns(4)
+                    col1, col2, col3, col4, col5 = st.columns(5)
                     col1.metric("Total Trades", total_trades)
                     
                     # Dynamic Label with Live Indicator
                     pnl_label = "Today's Net P&L (Live)"
                     col2.metric(pnl_label, f"₹{total_pnl:,.2f}", delta=f"{total_pnl:.2f}")
                     
-                    col3.metric("Realized", f"₹{realized_pnl:,.2f}")
-                    col4.metric("Unrealized", f"₹{unrealized_pnl:,.2f}", delta_color="off")
+                    col3.metric("Gross Realized", f"₹{realized_pnl:,.2f}")
+                    col4.metric("Taxes/Chgs", f"₹{total_charges:,.2f}", delta_color="inverse")
+                    col5.metric("Unrealized", f"₹{unrealized_pnl:,.2f}", delta_color="off")
                     
                     st.subheader("📝 Trade Log Details")
                     
                     # Ensure columns order if available
                     # Add CMP if we created it
-                    display_cols = ['Time', 'Ticker', 'Signal', 'Entry_Price', 'CMP', 'Qty', 'PnL', 'Exit_Reason', 'Status']
+                    display_cols = ['Time', 'Ticker', 'Signal', 'Entry_Price', 'CMP', 'Qty', 'PnL', 'Charges', 'Net_PnL', 'Exit_Reason', 'Status']
                     
                     # Fill CMP for closed trades with Exit Price if missing
                     if 'CMP' not in df.columns: df['CMP'] = df['Exit_Price']
@@ -1269,7 +1279,7 @@ def main():
                     if not final_cols: final_cols = df.columns
                     
                     # Style PnL
-                    st.dataframe(df[final_cols].style.format({"Entry_Price": "{:.2f}", "CMP": "{:.2f}", "PnL": "{:.2f}"}), use_container_width=True)
+                    st.dataframe(df[final_cols].style.format({"Entry_Price": "{:.2f}", "CMP": "{:.2f}", "PnL": "{:.2f}", "Charges": "{:.2f}", "Net_PnL": "{:.2f}"}), use_container_width=True)
                 else:
                     st.info("Trade Log exists but is empty. Waiting for trades...")
             except Exception as e:
@@ -1333,31 +1343,48 @@ def main():
                     max_daily_loss=max_loss_pct
                 )
                 
-            if results:
+            if results is not None:
                 st.success("Backtest Complete")
                 
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Win Rate", f"{results['win_rate']:.2f}%")
-                col2.metric("Final Capital", f"₹{results['final_capital']:.2f}")
-                col3.metric("Total Trades", len(results['trades']))
+                # Convert list to DataFrame
+                df_results = pd.DataFrame(results)
                 
-                if results['trades']:
-                    df_trades = pd.DataFrame(results['trades'])
+                if not df_results.empty:
+                    # Calculate Stats
+                    total_trades = len(df_results)
+                    total_pnl = df_results['PnL'].sum()
+                    win_trades = len(df_results[df_results['PnL'] > 0])
+                    win_rate = (win_trades / total_trades * 100) if total_trades > 0 else 0
+                    final_capital = initial_cap + total_pnl
+                    
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Win Rate", f"{win_rate:.2f}%")
+                    col2.metric("Final Capital", f"₹{final_capital:,.2f}")
+                    col3.metric("Total Trades", total_trades)
+                    
+                    st.dataframe(df_results)
                     
                     # Weekday Analysis
-                    if results.get('weekday_stats') is not None:
-                        st.subheader("📅 Performance by Weekday")
-                        st.dataframe(results['weekday_stats'].style.format({'PnL': '₹{:.2f}', 'Win Rate %': '{:.2f}%'}))
+                    if 'Entry Time' in df_results.columns:
+                        try:
+                            df_results['Entry Time'] = pd.to_datetime(df_results['Entry Time'])
+                            df_results['Day'] = df_results['Entry Time'].dt.day_name()
+                            weekday_stats = df_results.groupby('Day')['PnL'].sum().reset_index()
+                            st.subheader("📅 Performance by Weekday")
+                            st.dataframe(weekday_stats.style.format({'PnL': '₹{:.2f}'}))
+                        except Exception as e:
+                            st.warning(f"Could not calculate weekday stats: {e}")
 
-                    st.dataframe(df_trades)
-                    
-                    # Plot Chart
-                    st.subheader("📉 Trade Visualization")
-                    if 'data' in results:
-                        chart = plot_day_trading_chart(results['data'], results['trades'], ticker)
-                        st.plotly_chart(chart, use_container_width=True)
-                    else:
-                        st.warning("Chart data not available.")
+                    # Plot Chart (Placeholder - needs implementation if plot_day_trading_chart expects specific format)
+                    # st.subheader("📉 Trade Visualization")
+                    # if 'data' in results: # 'data' is not currently returned
+                    #     chart = plot_day_trading_chart(results['data'], results['trades'], ticker)
+                    #     st.plotly_chart(chart, use_container_width=True)
+                else:
+                    st.warning("No trades generated during the backtest period.")
+
+                
+
     
     # --- SWING TRADING PAGES (Original Logic) ---
 
@@ -1399,31 +1426,39 @@ def main():
                     exclude_days=exclude_days
                 )
                 
-            if results:
+            if results is not None:
                 st.success("Option Backtest Complete")
                 
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Win Rate", f"{results['win_rate']:.2f}%")
-                col2.metric("Final Capital", f"₹{results['final_capital']:.2f}")
-                col3.metric("Total Trades", len(results['trades']))
+                # Convert list to DataFrame
+                df_results = pd.DataFrame(results)
                 
-                if results['trades']:
-                    df_trades = pd.DataFrame(results['trades'])
+                if not df_results.empty:
+                    # Calculate Stats
+                    total_trades = len(df_results)
+                    total_pnl = df_results['PnL'].sum()
+                    win_trades = len(df_results[df_results['PnL'] > 0])
+                    win_rate = (win_trades / total_trades * 100) if total_trades > 0 else 0
+                    final_capital = initial_cap + total_pnl
+                    
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Win Rate", f"{win_rate:.2f}%")
+                    col2.metric("Final Capital", f"₹{final_capital:,.2f}")
+                    col3.metric("Total Trades", total_trades)
+                    
+                    st.dataframe(df_results)
                     
                     # Weekday Analysis
-                    if results.get('weekday_stats') is not None:
-                        st.subheader("📅 Performance by Weekday")
-                        st.dataframe(results['weekday_stats'].style.format({'PnL': '₹{:.2f}', 'Win Rate %': '{:.2f}%'}))
-
-                    st.dataframe(df_trades)
-                    
-                    # Plot Chart
-                    st.subheader("📉 Trade Visualization (Index Spot)")
-                    if 'data' in results:
-                        chart = plot_day_trading_chart(results['data'], results['trades'], ticker)
-                        st.plotly_chart(chart, use_container_width=True)
-                    else:
-                        st.warning("Chart data not available.")
+                    if 'Entry Time' in df_results.columns:
+                        try:
+                            df_results['Entry Time'] = pd.to_datetime(df_results['Entry Time'])
+                            df_results['Day'] = df_results['Entry Time'].dt.day_name()
+                            weekday_stats = df_results.groupby('Day')['PnL'].sum().reset_index()
+                            st.subheader("📅 Performance by Weekday")
+                            st.dataframe(weekday_stats.style.format({'PnL': '₹{:.2f}'}))
+                        except Exception as e:
+                            st.warning(f"Could not calculate weekday stats: {e}")
+                else:
+                    st.warning("No trades generated during the backtest period.")
 
     elif page == "🏭 Sector Analysis":
         st.header("Sector Analysis Dashboard")
