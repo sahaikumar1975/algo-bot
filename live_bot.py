@@ -303,6 +303,8 @@ def check_for_signals(watchlist, config):
             # If the last candle's timestamp is not perfectly aligned with the interval,
             # it's a "Hybrid" live quote. We only use CLOSED candles for signal triggers.
             signal_df = intraday_df.copy()
+            from day_trading_strategy import calculate_vwap
+            signal_df = calculate_vwap(signal_df)
             if not signal_df.empty:
                 last_ts = signal_df.index[-1]
                 try:
@@ -338,11 +340,21 @@ def check_for_signals(watchlist, config):
                             signal_data = raw_signal
                         elif hmm_regime == 'BEARISH' and sig == 'SHORT':
                             signal_data = raw_signal
-                        elif hmm_regime == 'CHOPPY':
-                            # In chop, block index trades per User Request to avoid losses
-                            logging.info(f"Skipping {sig} on {ticker} due to CHOPPY HMM Regime (Index Safety Filter)")
+                        elif hmm_regime == 'CHOPPY' or hmm_regime == 'UNKNOWN':
+                            # Strict blocking for indices: no trade in chop or uncertain regimes
+                            logging.info(f"Skipping {sig} on {ticker} due to {hmm_regime} HMM Regime (Index Safety Filter)")
                         else:
                             logging.info(f"Skipping {sig} on {ticker} due to HMM Regime {hmm_regime}")
+                    
+                        # --- ADDITIONAL TREND FILTER: VWAP ---
+                        if signal_data and 'VWAP' in signal_df.columns:
+                            curr_c = signal_df.iloc[-1]
+                            if sig == 'LONG' and curr_c['Close'] <= curr_c['VWAP']:
+                                logging.info(f"Skipping LONG on {ticker}: Price {curr_c['Close']} is below VWAP {curr_c['VWAP']:.2f}")
+                                signal_data = None
+                            elif sig == 'SHORT' and curr_c['Close'] >= curr_c['VWAP']:
+                                logging.info(f"Skipping SHORT on {ticker}: Price {curr_c['Close']} is above VWAP {curr_c['VWAP']:.2f}")
+                                signal_data = None
                     
                 current_price = intraday_df.iloc[-1]['Close']
                 ema = signal_df.iloc[-1]['EMA9'] if 'EMA9' in signal_df.columns else current_price
@@ -451,7 +463,10 @@ def check_for_signals(watchlist, config):
                 
                 validator = AIValidator()
                 ai_bypass = config.get("ALLOW_AI_BYPASS", False)
-                ai_res = validator.validate_trade(ticker, signal_type, entry_p, technicals, allow_bypass=ai_bypass)
+                # STRICT AI FOR INDICES: Never allow bypass for Nifty/BankNifty
+                current_ai_bypass = False if is_index else ai_bypass
+                
+                ai_res = validator.validate_trade(ticker, signal_type, entry_p, technicals, allow_bypass=current_ai_bypass)
                 ai_cooldowns[ticker] = ts
                 
                 if ai_res['valid']:
