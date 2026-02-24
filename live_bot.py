@@ -309,10 +309,28 @@ def check_for_signals(watchlist, config):
                 last_ts = signal_df.index[-1]
                 try:
                     interval_min = int(interval_fyers)
+                    # A candle is "Hybrid" (unclosed) if:
+                    # 1. Its start time is not on an interval multiple OR
+                    # 2. The current time is still within that candle's duration
+                    current_time = pd.Timestamp.now(tz='Asia/Kolkata')
+                    # Ensure last_ts is timezone-aware for comparison
+                    if last_ts.tzinfo is None:
+                        last_ts_aware = last_ts.tz_localize('Asia/Kolkata')
+                    else:
+                        last_ts_aware = last_ts.tz_convert('Asia/Kolkata')
+                        
+                    is_hybrid = False
                     if last_ts.minute % interval_min != 0:
+                        is_hybrid = True
+                    elif current_time < (last_ts_aware + pd.Timedelta(minutes=interval_min)):
+                        # If we are before the next candle start, the current row is still live
+                        is_hybrid = True
+                        
+                    if is_hybrid:
                         # logging.info(f"Hybrid Row Detected for {ticker} at {last_ts}. Excluding for Signal Trigger.")
                         signal_df = signal_df.iloc[:-1]
-                except: pass
+                except Exception as e:
+                    logging.warning(f"Error in Hybrid Row Check: {e}")
 
             # --- STRATEGY & REGIME ---
             regime = "SNIPER" # Default
