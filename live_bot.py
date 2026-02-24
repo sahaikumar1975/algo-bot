@@ -224,9 +224,7 @@ def get_watchlist():
             "ASIANPAINT.NS", "TVSMOTOR.NS", "BHARTIARTL.NS", 
             "HINDUNILVR.NS", "TCS.NS", "DLF.NS",
             # New Nifty 200 Top Performers (Phase 6 Screen)
-            "GODREJPROP.NS", "LT.NS", "HINDALCO.NS", "WIPRO.NS",
-            "GODREJCP.NS", "GAIL.NS", "MARICO.NS", "GMRAIRPORT.NS",
-            "IDFCFIRSTB.NS"
+            "GODREJPROP.NS", "LT.NS", "HINDALCO.NS", "GODREJCP.NS"
         ]
         stock_tickers.update(ELITE_ORB_BUNDLE)
         
