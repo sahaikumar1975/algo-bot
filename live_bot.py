@@ -219,9 +219,14 @@ def get_watchlist():
     if enable_elite_orb_bundle:
         # Nifty 100 Filtered Elite Bundle (Top 10 High PnL + >50% WR)
         ELITE_ORB_BUNDLE = [
+            # Original Nifty 100 Elite
             "MARUTI.NS", "APOLLOHOSP.NS", "LTIM.NS", "SIEMENS.NS", 
             "ASIANPAINT.NS", "TVSMOTOR.NS", "BHARTIARTL.NS", 
-            "HINDUNILVR.NS", "TCS.NS", "DLF.NS"
+            "HINDUNILVR.NS", "TCS.NS", "DLF.NS",
+            # New Nifty 200 Top Performers (Phase 6 Screen)
+            "GODREJPROP.NS", "LT.NS", "HINDALCO.NS", "WIPRO.NS",
+            "GODREJCP.NS", "GAIL.NS", "MARICO.NS", "GMRAIRPORT.NS",
+            "IDFCFIRSTB.NS"
         ]
         stock_tickers.update(ELITE_ORB_BUNDLE)
         
