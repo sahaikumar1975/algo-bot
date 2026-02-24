@@ -502,7 +502,7 @@ def check_for_signals(watchlist, config):
                         "TVSMOTOR.NS": 175,
                         "ASIANPAINT.NS": 250,
                         "HINDUNILVR.NS": 300,
-                        "LT.NS": 300
+                        "LT.NS": 175
                     }
                     is_stock_option = False
                     if not is_index and ticker in STOCK_OPTIONS_LOTS:
