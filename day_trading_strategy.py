@@ -14,6 +14,11 @@ import requests
 import time
 import logging
 
+try:
+    from custom_hmm import CustomGaussianHMM
+except ImportError:
+    CustomGaussianHMM = None
+
 def add_rsi(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     """Add Relative Strength Index (RSI)."""
     delta = df['Close'].diff()
@@ -79,13 +84,19 @@ def calculate_cpr(daily_df: pd.DataFrame) -> pd.DataFrame:
     df['TC'] = (df['Pivot'] - df['BC']) + df['Pivot']
     return df[['Pivot', 'BC', 'TC']].shift(1)
 
-def calculate_9ema(df: pd.DataFrame) -> pd.DataFrame:
-    """Calculate 9 EMA."""
-    df['EMA9'] = df['Close'].ewm(span=9, adjust=False).mean()
+def calculate_ema(df: pd.DataFrame, period: int = 9) -> pd.DataFrame:
+    """Calculate EMA dynamically."""
+    df[f'EMA{period}'] = df['Close'].ewm(span=period, adjust=False).mean()
+    # For backwards compatibility where code expects EMA9 specifically if using default
+    if period == 9 and 'EMA9' not in df.columns:
+        pass # It is already created
     return df
 
-def fetch_data(ticker: str, period: str = '5d', broker=None) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Fetch Intraday (5m) and Daily data."""
+# Alias for backward compatibility
+calculate_9ema = lambda df: calculate_ema(df, period=9)
+
+def fetch_data(ticker: str, period: str = '5d', broker=None, interval_fyers="5", interval_yf="5m") -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Fetch Intraday and Daily data."""
     daily_df = pd.DataFrame()
     intraday_df = pd.DataFrame()
     
@@ -103,7 +114,43 @@ def fetch_data(ticker: str, period: str = '5d', broker=None) -> tuple[pd.DataFra
             start_daily = (today - timedelta(days=365)).strftime("%Y-%m-%d")
             daily_df = broker.get_history(fyers_sym, "1D", start_daily, today_str, date_format='1')
             start_intra = (today - timedelta(days=59)).strftime("%Y-%m-%d")
-            intraday_df = broker.get_history(fyers_sym, "5", start_intra, today_str, date_format='1')
+            intraday_df = broker.get_history(fyers_sym, interval_fyers, start_intra, today_str, date_format='1')
+            
+            # --- CRITICAL FIX: Check Data Freshness ---
+            if not intraday_df.empty:
+                last_dt = intraday_df.index[-1].date()
+                curr_dt = datetime.now().date()
+                # If market is open (>= 09:15) and last data is NOT from today, it's stale
+                is_market_open = datetime.now().time() >= datetime.strptime("09:15", "%H:%M").time()
+                
+                if is_market_open and last_dt < curr_dt:
+                     logging.warning(f"⚠️ Fyers Data Stale for {ticker}: Last {last_dt}, Curr {curr_dt}. Forcing Fallback.")
+                     raise Exception("Stale Data")
+                
+                # --- HYBRID FETCH: Append Real-Time Quote (LTP) if History is Lagging ---
+                try:
+                    quotes = broker.get_quotes([fyers_sym])
+                    if quotes and len(quotes) > 0:
+                        q = quotes[0]
+                        # Fyers V3 Quote keys: 'lp'=LTP, 'v'=Vol, 't'=Timestamp (Epoch), 'o','h','l'
+                        if 't' in q and 'lp' in q:
+                            quote_ts = pd.to_datetime(q['t'], unit='s', utc=True).tz_convert('Asia/Kolkata')
+                            last_hist_ts = intraday_df.index[-1]
+                            
+                            # If Quote is newer than last candle (by at least 1 min to avoid dupes)
+                            if quote_ts > last_hist_ts:
+                                logging.info(f"Hybrid: Appending Latest Quote for {ticker} @ {q['lp']}")
+                                new_row = pd.DataFrame([{
+                                    'Open': float(q.get('o', q['lp'])),
+                                    'High': float(q.get('h', q['lp'])),
+                                    'Low': float(q.get('l', q['lp'])),
+                                    'Close': float(q['lp']),
+                                    'Volume': float(q.get('v', 0))
+                                }], index=[quote_ts])
+                                intraday_df = pd.concat([intraday_df, new_row])
+                except Exception as e:
+                    logging.error(f"Hybrid Quote Error {ticker}: {e}")
+
             if not daily_df.empty and not intraday_df.empty:
                 return daily_df, intraday_df
         except Exception as e:
@@ -112,7 +159,7 @@ def fetch_data(ticker: str, period: str = '5d', broker=None) -> tuple[pd.DataFra
     for attempt in range(3):
         try:
             daily_df = yf.download(ticker, period='1y', interval='1d', progress=False, timeout=10)
-            intraday_df = yf.download(ticker, period='60d', interval='5m', progress=False, timeout=10)
+            intraday_df = yf.download(ticker, period='60d', interval=interval_yf, progress=False, timeout=10)
             if not daily_df.empty and not intraday_df.empty:
                 break
         except Exception as e:
@@ -124,7 +171,7 @@ def fetch_data(ticker: str, period: str = '5d', broker=None) -> tuple[pd.DataFra
     return daily_df, intraday_df
 
 # --- INDICES STRATEGY (3-Candle Cluster) ---
-def check_3_candle_setup(df_slice, sl_method='CLUSTER', limit_buffer=5.0):
+def check_3_candle_setup(df_slice, sl_method='CLUSTER', limit_buffer=5.0, ema_col='EMA9'):
     """
     Check for 3-Candle Cluster Setup.
     sl_method: 'CLUSTER' (Lowest Low/Highest High of 3) or 'REF' (High/Low of Signal Candle).
@@ -157,16 +204,16 @@ def check_3_candle_setup(df_slice, sl_method='CLUSTER', limit_buffer=5.0):
         # logging.warning(f"Date check error: {e}")
         pass
 
-    if pd.isna(c1['EMA9']) or pd.isna(c2['EMA9']) or pd.isna(c3['EMA9']): return None
+    if pd.isna(c1[ema_col]) or pd.isna(c2[ema_col]) or pd.isna(c3[ema_col]): return None
 
     # --- BUY SETUP (CE) ---
     # 1. Fresh Cross: C1 crosses UP (Open < EMA, Close > EMA)
     # 2. Previous Candle must be BELOW EMA (to ensure it's a fresh move)
-    c1_crossover = c1['Open'] < c1['EMA9'] and c1['Close'] > c1['EMA9']
-    prev_below = c_prev['Close'] < c_prev['EMA9']
+    c1_crossover = c1['Open'] < c1[ema_col] and c1['Close'] > c1[ema_col]
+    prev_below = c_prev['Close'] < c_prev[ema_col]
     # If c1 opened below, prev close likely below, but checking explicitly is safer
     
-    all_above = c1['Close'] > c1['EMA9'] and c2['Close'] > c2['EMA9'] and c3['Close'] > c3['EMA9']
+    all_above = c1['Close'] > c1[ema_col] and c2['Close'] > c2[ema_col] and c3['Close'] > c3[ema_col]
     
     if c1_crossover and prev_below and all_above:
         reds = [c for c in [c1, c2, c3] if c['Close'] < c['Open']]
@@ -189,10 +236,10 @@ def check_3_candle_setup(df_slice, sl_method='CLUSTER', limit_buffer=5.0):
     # --- SELL SETUP (PE) ---
     # 1. Fresh Cross: C1 crosses DOWN (Open > EMA, Close < EMA)
     # 2. Previous Candle must be ABOVE EMA
-    c1_cross_sell = c1['Open'] > c1['EMA9'] and c1['Close'] < c1['EMA9']
-    prev_above = c_prev['Close'] > c_prev['EMA9']
+    c1_cross_sell = c1['Open'] > c1[ema_col] and c1['Close'] < c1[ema_col]
+    prev_above = c_prev['Close'] > c_prev[ema_col]
     
-    all_below = c1['Close'] < c1['EMA9'] and c2['Close'] < c2['EMA9'] and c3['Close'] < c3['EMA9']
+    all_below = c1['Close'] < c1[ema_col] and c2['Close'] < c2[ema_col] and c3['Close'] < c3[ema_col]
     
     if c1_cross_sell and prev_above and all_below:
         greens = [c for c in [c1, c2, c3] if c['Close'] > c['Open']]
@@ -220,7 +267,7 @@ def backtest_day_strategy(ticker, initial_capital=100000, risk_per_trade=0.01, m
     if daily_df.empty or intraday_df.empty: return []
 
     # Calculate Indicators
-    intraday_df = calculate_9ema(intraday_df)
+    intraday_df = calculate_ema(intraday_df, period=9) # Legacy function call context
     
     trades = []
     capital = initial_capital
@@ -405,6 +452,165 @@ def check_9ema_signal(curr, prev):
         return {'Signal': 'SHORT', 'Entry': prev['Low'], 'SL': prev['High']}
     elif prev['High'] < ema9 and curr['High'] > prev['High']:
         return {'Signal': 'LONG', 'Entry': prev['High'], 'SL': prev['Low']}
+    return None
+
+def train_hmm_model(daily_df: pd.DataFrame):
+    """Train HMM model on daily returns and volatility to detect regime."""
+    if CustomGaussianHMM is None or len(daily_df) < 50:
+        return None
+        
+    df = daily_df.copy()
+    df['Returns'] = df['Close'].pct_change()
+    df['Volatility'] = df['Returns'].rolling(window=5).std()
+    df = df.dropna()
+    
+    if len(df) < 20:
+        return None
+        
+    X = df[['Returns', 'Volatility']].values
+    
+    model = CustomGaussianHMM(n_components=3, n_iter=100, random_state=42)
+    try:
+        model.fit(X)
+        return model
+    except Exception as e:
+        logging.error(f"HMM Training failed: {e}")
+        return None
+
+def get_hmm_regime(model, daily_df: pd.DataFrame) -> str:
+    """Predict current regime ('BULLISH', 'BEARISH', 'CHOPPY')."""
+    if model is None or len(daily_df) < 10:
+        return 'UNKNOWN'
+        
+    df = daily_df.copy()
+    df['Returns'] = df['Close'].pct_change()
+    df['Volatility'] = df['Returns'].rolling(window=5).std()
+    df = df.dropna()
+    
+    if len(df) == 0:
+        return 'UNKNOWN'
+        
+    X = df[['Returns', 'Volatility']].values
+    try:
+        hidden_states = model.predict(X)
+        # Ensure hidden_states is easily indexable (numpy flatten)
+        hidden_states = np.array(hidden_states).flatten()
+        current_state = hidden_states[-1]
+        
+        state_returns = []
+        df_returns = df['Returns'].values.flatten()
+        for i in range(model.n_components):
+            mask = (hidden_states == i)
+            state_count = np.sum(mask)
+            mean_ret = np.mean(df_returns[mask]) if state_count > 0 else 0
+            state_returns.append(mean_ret)
+            
+        sorted_states = np.argsort(state_returns)
+        
+        if current_state == sorted_states[2]:
+            return 'BULLISH'
+        elif current_state == sorted_states[0]:
+            return 'BEARISH'
+        else:
+            return 'CHOPPY'
+    except Exception as e:
+        logging.error(f"Error predicting HMM regime: {e}")
+        return 'UNKNOWN'
+
+# --- NEW: HMM + PRICE ACTION (ORB) STRATEGY ---
+def check_orb_breakout_setup(df_slice, start_hour=9, start_min=15, end_hour=9, end_min=30):
+    """
+    Check for an Opening Range Breakout (ORB) on 15m candles.
+    The "Opening Range" is established between start and end times.
+    A breakout occurs when a candle CLOSES outside this range after the end time.
+    """
+    if df_slice.empty: return None
+    
+    # Ensure current candle is from today
+    curr = df_slice.iloc[-1]
+    curr_time = curr.name
+    
+    # Try to grab data just for the current date to establish ORB
+    try:
+        current_date_data = df_slice[df_slice.index.date == curr_time.date()]
+        if current_date_data.empty: return None
+    except:
+        return None
+        
+    start_time_str = f"{start_hour:02d}:{start_min:02d}:00"
+    end_time_str = f"{end_hour:02d}:{end_min:02d}:00"
+    
+    # Filter for the opening range candles
+    opening_range_data = current_date_data.between_time(start_time_str, end_time_str)
+    
+    # Needs at least some candles to form a range (e.g. 9:15, 9:30, 9:45, 10:00 for a 15 min chart up to 10:15)
+    if opening_range_data.empty or len(opening_range_data) < 2:
+        return None
+        
+    # Calculate ORB High and Low
+    orb_high = opening_range_data['High'].max()
+    orb_low = opening_range_data['Low'].min()
+    
+    # We only look for breakouts AFTER the opening range is complete (e.g., after 10:15)
+    if curr_time.time() <= pd.Timestamp(end_time_str).time():
+        return None
+        
+    # We also want to know if a breakout ALREADY happened earlier in the day to avoid re-entering late.
+    # For a pure system, we only take the FIRST candle that closes outside.
+    # Check all candles today after the ORB end time up to the current one.
+    after_orb_data = current_date_data.between_time(
+        (pd.Timestamp(end_time_str) + pd.Timedelta(minutes=1)).time(), 
+        curr_time.time()
+    )
+    
+    if after_orb_data.empty: return None
+    
+    # Is the current candle the FIRST one to close outside the range today?
+    # Or did a previous candle already breach it?
+    previous_candles = after_orb_data.iloc[:-1]
+    
+    if not previous_candles.empty:
+        prev_breakout_up = (previous_candles['Close'] > orb_high).any()
+        prev_breakout_down = (previous_candles['Close'] < orb_low).any()
+        if prev_breakout_up or prev_breakout_down:
+            return None # A breakout already triggered earlier today. Wait for tomorrow.
+
+    # Current Candle Breakout Check
+    # SL is the midpoint of the ORB range to keep risk tight but give it breathing room.
+    midpoint = (orb_high + orb_low) / 2.0
+    
+    # RISK CHECK: If the Opening Range is excessively massive (> 1.5% of the stock price), skip it.
+    # This prevents taking breakouts on days with wild 9:15-10:15 volatility that creates an un-tradeable huge SL.
+    orb_size_pct = (orb_high - orb_low) / orb_low * 100
+    if orb_size_pct > 1.5:
+        return None
+    
+    # LONG BREAKOUT
+    if curr['Close'] > orb_high:
+        risk = curr['Close'] - midpoint
+        if risk <= 0: return None
+        return {
+            'Signal': 'LONG', 
+            'Entry': curr['Close'], 
+            'SL': midpoint, 
+            'Time': curr_time,
+            'OR_High': orb_high,
+            'OR_Low': orb_low
+        }
+        
+    # SHORT BREAKOUT
+    elif curr['Close'] < orb_low:
+        risk = midpoint - curr['Close']
+        if risk <= 0: return None
+        return {
+            'Signal': 'SHORT', 
+            'Entry': curr['Close'], 
+            'SL': midpoint, 
+            'Time': curr_time,
+            'OR_High': orb_high,
+            'OR_Low': orb_low
+        }
+        
     return None
 
 def backtest_9ema_strategy(ticker):
