@@ -543,8 +543,8 @@ def check_orb_breakout_setup(df_slice, start_hour=9, start_min=15, end_hour=9, e
     # Filter for the opening range candles
     opening_range_data = current_date_data.between_time(start_time_str, end_time_str)
     
-    # Needs at least some candles to form a range (e.g. 9:15, 9:30, 9:45, 10:00 for a 15 min chart up to 10:15)
-    if opening_range_data.empty or len(opening_range_data) < 2:
+    # Needs at least one candle to form a range
+    if opening_range_data.empty:
         return None
         
     # Calculate ORB High and Low
