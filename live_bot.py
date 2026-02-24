@@ -114,7 +114,7 @@ def get_strike_for_trade(price, ticker, otype, depth=2):
     elif 'BHARTIARTL' in t: step = 10
     elif 'DLF' in t: step = 5
     elif 'TVSMOTOR' in t: step = 10
-    elif 'ASIANPAINT' in t: step = 20
+    elif 'LT' in t: step = 20 # LT strikes are usually 20 or 50
     elif 'HINDUNILVR' in t: step = 20
     
     atm = int(round(price / step) * step)
@@ -501,7 +501,8 @@ def check_for_signals(watchlist, config):
                         "DLF.NS": 825,
                         "TVSMOTOR.NS": 175,
                         "ASIANPAINT.NS": 250,
-                        "HINDUNILVR.NS": 300
+                        "HINDUNILVR.NS": 300,
+                        "LT.NS": 300
                     }
                     is_stock_option = False
                     if not is_index and ticker in STOCK_OPTIONS_LOTS:
