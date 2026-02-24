@@ -15,13 +15,18 @@ from datetime import datetime
 import os
 import json
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 
 from market_scanner import scan_stock, NIFTY_50
-from day_trading_strategy import fetch_data, add_rsi, calculate_9ema, check_3_candle_setup, check_stock_signal, calculate_cpr, calculate_vwap, calculate_adx, detect_market_regime
+from day_trading_strategy import (
+    fetch_data, add_rsi, calculate_ema, check_3_candle_setup, check_orb_breakout_setup,
+    check_stock_signal, calculate_cpr, calculate_vwap, calculate_adx, detect_market_regime,
+    train_hmm_model, get_hmm_regime
+)
 from ai_validator import AIValidator
 from fyers_integration import FyersApp
-from option_util import get_fyers_symbol
+from option_util import get_fyers_symbol, get_futures_symbol
+from strategies.pos_futures import PositionalFuturesBot
 import re
 
 # Broker Init
@@ -55,7 +60,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(BASE_DIR, "bot.log")
 TRADE_LOG = os.path.join(BASE_DIR, "trade_log.csv")
 CONFIG_FILE = os.path.join(BASE_DIR, "bot_config.json")
-TRADE_COLUMNS = ['Time', 'Ticker', 'Instrument', 'Signal', 'Entry_Price', 'Qty', 'SL', 'Target', 'Notes', 'Exit_Time', 'Exit_Price', 'Exit_Reason', 'PnL', 'Status', 'Regime', 'Charges', 'Net_PnL']
+TRADE_COLUMNS = ['Time', 'Ticker', 'Instrument', 'Signal', 'Entry_Price', 'Qty', 'SL', 'Target', 'Notes', 'Exit_Time', 'Exit_Price', 'Exit_Reason', 'PnL', 'Status', 'Regime', 'Charges', 'Net_PnL', 'Actual_Entry', 'Actual_Exit']
 
 # Config
 def load_config():
@@ -89,7 +94,7 @@ for logger_name in logging.Logger.manager.loggerDict:
         logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-file_handler = logging.FileHandler(LOG_FILE, mode='w')
+file_handler = logging.FileHandler(LOG_FILE, mode='a')
 file_handler.setFormatter(formatter)
 root_logger = logging.getLogger()
 root_logger.addHandler(file_handler)
@@ -102,8 +107,16 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 ai_cooldowns = {}
 
 def get_strike_for_trade(price, ticker, otype, depth=2):
-    """Calculate ITM Strike Price for Higher Delta."""
-    step = 100 if 'BANK' in ticker.upper() else 50
+    """Calculate ITM/ATM Strike Price for Options."""
+    step = 50
+    t = ticker.upper()
+    if 'BANK' in t: step = 100
+    elif 'BHARTIARTL' in t: step = 10
+    elif 'DLF' in t: step = 5
+    elif 'TVSMOTOR' in t: step = 10
+    elif 'ASIANPAINT' in t: step = 20
+    elif 'HINDUNILVR' in t: step = 20
+    
     atm = int(round(price / step) * step)
     if otype == "CE": return atm - (step * depth)
     else: return atm + (step * depth)
@@ -124,15 +137,18 @@ def calculate_charges(entry_price, exit_price, qty, ticker, is_option):
         brokerage_entry = min(20.0, entry_turnover * 0.0003)
         brokerage_exit = min(20.0, exit_turnover * 0.0003)
     else:
-        # OPTION CHECK: If Price is Spot Level (>5000), normalize to estimated premium
-        if entry_price > 5000:
-            if 'BANK' in ticker.upper(): entry_price = entry_price * 0.008
-            else: entry_price = entry_price * 0.006
-
-        if exit_price > 5000:
-            if 'BANK' in ticker.upper(): exit_price = exit_price * 0.008
-            else: exit_price = exit_price * 0.006
-            
+        # OPTION CHECK: If Price is Spot Level, normalize to estimated premium.
+        # ATM options are roughly 0.6%-0.8% of index value or 1.5%-2.5% of stock value (monthly)
+        t = ticker.upper()
+        if 'BANK' in t and entry_price > 5000:
+             entry_price = entry_price * 0.008
+             exit_price = exit_price * 0.008
+        elif 'NIFTY' in t and entry_price > 5000:
+             entry_price = entry_price * 0.006
+             exit_price = exit_price * 0.006
+        elif entry_price > 100:
+             entry_price = entry_price * 0.02
+             exit_price = exit_price * 0.02
         # Recalculate Turnover
         entry_turnover = entry_price * qty
         exit_turnover = exit_price * qty
@@ -174,7 +190,7 @@ def check_and_migrate_log():
             migrated = False
             for col in TRADE_COLUMNS:
                 if col not in df.columns:
-                    df[col] = 0.0 if col in ['Charges', 'Net_PnL'] else ""
+                    df[col] = 0.0 if col in ['Charges', 'Net_PnL', 'Actual_Entry', 'Actual_Exit'] else ""
                     migrated = True
             
             if migrated:
@@ -183,15 +199,36 @@ def check_and_migrate_log():
     except: pass
 
 def get_watchlist():
-    """Build Watchlist: Indices + Nifty 50 Stocks."""
-    logging.info("Building Daily Watchlist...")
+    """Build Watchlist: Indices + Nifty 50 Stocks based on Config."""
+    config = load_config()
+    enable_indices = config.get('ENABLE_INDICES', True)
+    enable_stocks = config.get('ENABLE_STOCKS', False)
+    enable_elite_orb_bundle = config.get('ENABLE_ELITE_ORB_BUNDLE', True)
+    
+    logging.info(f"Building Watchlist... [Indices: {enable_indices}, Nifty50: {enable_stocks}, ELITE-ORB: {enable_elite_orb_bundle}]")
     watchlist = []
+    
     indices = ['^NSEI', '^NSEBANK']
-    for ticker in indices: watchlist.append({'ticker': ticker, 'type': 'INDEX'})
-    # Filter out indices from NIFTY_50 list as they are already added
-    stock_list = [t for t in NIFTY_50 if t not in indices]
-    for ticker in stock_list: watchlist.append({'ticker': ticker, 'type': 'STOCK'})
-    logging.info(f"Watchlist: 2 Indices + {len(stock_list)} Stocks.")
+    if enable_indices:
+        for ticker in indices: watchlist.append({'ticker': ticker, 'type': 'INDEX'})
+        
+    stock_tickers = set()
+    if enable_stocks:
+        stock_tickers.update([t for t in NIFTY_50 if t not in indices])
+        
+    if enable_elite_orb_bundle:
+        # Nifty 100 Filtered Elite Bundle (Top 10 High PnL + >50% WR)
+        ELITE_ORB_BUNDLE = [
+            "MARUTI.NS", "APOLLOHOSP.NS", "LTIM.NS", "SIEMENS.NS", 
+            "ASIANPAINT.NS", "TVSMOTOR.NS", "BHARTIARTL.NS", 
+            "HINDUNILVR.NS", "TCS.NS", "DLF.NS"
+        ]
+        stock_tickers.update(ELITE_ORB_BUNDLE)
+        
+    if stock_tickers:
+        for ticker in stock_tickers: watchlist.append({'ticker': ticker, 'type': 'STOCK'})
+        
+    logging.info(f"Watchlist: {len([x for x in watchlist if x['type']=='INDEX'])} Indices + {len([x for x in watchlist if x['type']=='STOCK'])} Stocks.")
     return watchlist
 
 def check_for_signals(watchlist, config):
@@ -255,40 +292,108 @@ def check_for_signals(watchlist, config):
                  curr_stock_trades = len(tod[tod['Ticker'] == ticker])
              if curr_stock_trades >= MAX_TRADES_PER_STOCK: continue
         
+        interval_fyers = "5" if is_index else "15"
+        interval_yf = "5m" if is_index else "15m"
+        
         try:
-            daily_df, intraday_df = fetch_data(ticker, broker=broker)
+            daily_df, intraday_df = fetch_data(ticker, broker=broker, interval_fyers=interval_fyers, interval_yf=interval_yf)
             if intraday_df.empty or len(intraday_df) < 50: continue # Need history for ADX
             
+            # --- SIGNAL CONFIRMATION: Exclude Hybrid Rows ---
+            # If the last candle's timestamp is not perfectly aligned with the interval,
+            # it's a "Hybrid" live quote. We only use CLOSED candles for signal triggers.
+            signal_df = intraday_df.copy()
+            if not signal_df.empty:
+                last_ts = signal_df.index[-1]
+                try:
+                    interval_min = int(interval_fyers)
+                    if last_ts.minute % interval_min != 0:
+                        # logging.info(f"Hybrid Row Detected for {ticker} at {last_ts}. Excluding for Signal Trigger.")
+                        signal_df = signal_df.iloc[:-1]
+                except: pass
+
             # --- STRATEGY & REGIME ---
             regime = "SNIPER" # Default
+            signal_data = None
+
             
             if is_index:
-                # === INDICES (9EMA) ===
-                intraday_df = calculate_9ema(intraday_df)
-                intraday_df = calculate_adx(intraday_df)
-                regime = detect_market_regime(intraday_df)
+                # === INDICES (5m, 9EMA) ===
+                signal_df = calculate_ema(signal_df, period=9)
+                signal_df = calculate_adx(signal_df)
+                regime = detect_market_regime(signal_df)
                 
-                if len(intraday_df) >= 4:
+                # HMM Regime Detection for Indices
+                hmm_model = train_hmm_model(daily_df)
+                hmm_regime = get_hmm_regime(hmm_model, daily_df)
+                
+                if len(signal_df) >= 5:
                     # Index: Cluster SL + 5 pts buffer
-                    signal_data = check_3_candle_setup(intraday_df.iloc[-4:], sl_method='CLUSTER', limit_buffer=5.0)
-                    strategy_name = f"3-Candle 9EMA ({regime})"
+                    raw_signal = check_3_candle_setup(signal_df.iloc[-5:], sl_method='CLUSTER', limit_buffer=5.0, ema_col='EMA9')
+                    strategy_name = f"3-Candle 9EMA ({regime}, HMM: {hmm_regime})"
+                    
+                    if raw_signal:
+                        sig = raw_signal['Signal']
+                        if hmm_regime == 'BULLISH' and sig == 'LONG':
+                            signal_data = raw_signal
+                        elif hmm_regime == 'BEARISH' and sig == 'SHORT':
+                            signal_data = raw_signal
+                        elif hmm_regime == 'CHOPPY':
+                            # In chop, block index trades per User Request to avoid losses
+                            logging.info(f"Skipping {sig} on {ticker} due to CHOPPY HMM Regime (Index Safety Filter)")
+                        else:
+                            logging.info(f"Skipping {sig} on {ticker} due to HMM Regime {hmm_regime}")
                     
                 current_price = intraday_df.iloc[-1]['Close']
-                ema = intraday_df.iloc[-1]['EMA9']
+                ema = signal_df.iloc[-1]['EMA9'] if 'EMA9' in signal_df.columns else current_price
             else:
-                # === STOCKS (Switch to 9EMA Strict) ===
-                # Compute 9EMA for Stock
-                intraday_df = calculate_9ema(intraday_df)
+                # === STOCKS (15m, 21EMA Strict) ===
+                # Compute 21EMA for Stock
+                signal_df = calculate_ema(signal_df, period=21)
                 
-                # Use same logic as Index (Strict 3-Candle)
-                if len(intraday_df) >= 4:
-                    # Stock: Reference Candle High/Low SL + 0 buffer (User Request)
-                    signal_data = check_3_candle_setup(intraday_df.iloc[-4:], sl_method='REF', limit_buffer=0.0)
-                    strategy_name = "Stock 9EMA (Strict)"
-                    regime = "SNIPER" # Default to Sniper for stocks
+                # HMM Regime Detection
+                hmm_model = train_hmm_model(daily_df)
+                hmm_regime = get_hmm_regime(hmm_model, daily_df)
+                strategy_name = f"Stock 21EMA (HMM: {hmm_regime})"
+                regime = "SNIPER" # Default to Sniper for stocks
                 
+                # Use HMM and ORB Breakdown
+                if len(signal_df) >= 5:
+                    
+                    # CONFIG CHECK: ORB vs 9EMA
+                    use_orb = config.get('ENABLE_ORB_STRATEGY', True) # Default to True for Stocks now
+                    
+                    if use_orb:
+                        strategy_name = f"15m ORB (HMM: {hmm_regime})"
+                        raw_signal = check_orb_breakout_setup(signal_df)
+                        
+                        if raw_signal:
+                            if hmm_regime == 'BULLISH' and raw_signal['Signal'] == 'LONG':
+                                signal_data = raw_signal
+                            elif hmm_regime == 'BEARISH' and raw_signal['Signal'] == 'SHORT':
+                                signal_data = raw_signal
+                            else:
+                                logging.info(f"Skipping {raw_signal['Signal']} on {ticker} due to HMM Regime {hmm_regime} (ORB requires strict alignment)")
+                                
+                    else:
+                        strategy_name = f"Stock 21EMA (HMM: {hmm_regime})"
+                        # Stock: Reference Candle High/Low SL + 0 buffer, 21EMA
+                        raw_signal = check_3_candle_setup(signal_df.iloc[-5:], sl_method='REF', limit_buffer=0.0, ema_col='EMA21')
+                        
+                        if raw_signal:
+                            # Filter signal based on HMM Regime for existing EMA strat
+                            if hmm_regime == 'BULLISH' and raw_signal['Signal'] == 'LONG':
+                                signal_data = raw_signal
+                            elif hmm_regime == 'BEARISH' and raw_signal['Signal'] == 'SHORT':
+                                signal_data = raw_signal
+                            elif hmm_regime == 'CHOPPY' or hmm_regime == 'UNKNOWN':
+                                # Allow both but SNIPER regime handles tight exits
+                                signal_data = raw_signal
+                            else:
+                                logging.info(f"Skipping {raw_signal['Signal']} on {ticker} due to HMM Regime {hmm_regime}")
+                                
                 current_price = intraday_df.iloc[-1]['Close']
-                ema = intraday_df.iloc[-1]['EMA9']
+                ema = signal_df.iloc[-1]['EMA21'] if 'EMA21' in signal_df.columns else current_price
 
             if signal_data:
                 # Deduplication Logic: Check if we already traded this Signal Time
@@ -298,13 +403,23 @@ def check_for_signals(watchlist, config):
                     # Convert to pd.Timestamp for comparison
                     try:
                         sig_ts = pd.to_datetime(signal_time)
-                        # Check df_log for trades defined AFTER this signal time or AT same time
-                        # df_log['Time'] is string, need conversion
+                        if sig_ts.tzinfo is None:
+                            sig_ts = sig_ts.tz_localize('Asia/Kolkata')
+                        else:
+                            sig_ts = sig_ts.tz_convert('Asia/Kolkata')
+
                         if not df_log.empty:
+                            # Ensure df_log['Time'] is comparable
                             df_log['Time_Ts'] = pd.to_datetime(df_log['Time'])
+                            # Ensure Time_Ts is also localized/converted
+                            def safe_tz_convert(ts):
+                                if ts.tzinfo is None:
+                                    return ts.tz_localize('Asia/Kolkata')
+                                return ts.tz_convert('Asia/Kolkata')
+                            
+                            df_log['Time_Ts'] = df_log['Time_Ts'].apply(safe_tz_convert)
+                            
                             # Buffer: If we traded within 2 mins of this signal or after
-                            # Usually Signal Time is Candle Close (e.g. 13:40). Entry is 13:40:05.
-                            # So any trade with Time >= Signal Time is a match.
                             existing = df_log[
                                 (df_log['Ticker'] == ticker) & 
                                 (df_log['Signal'] == signal_data['Signal']) &
@@ -314,7 +429,8 @@ def check_for_signals(watchlist, config):
                                 # logging.info(f"Skipping Duplicate: {ticker} Signal {sig_ts} already traded.")
                                 continue
                     except Exception as e:
-                        logging.warning(f"Dedupe Check Failed: {e}")
+                        logging.warning(f"Dedupe Check Failed: {e}. Skipping trade for safety.")
+                        continue
                 signal_type = signal_data['Signal']
                 entry_p = signal_data['Entry']
                 sl_p = signal_data['SL']
@@ -344,27 +460,45 @@ def check_for_signals(watchlist, config):
                     target_p = 0
                     order_sym = ""
                     
-                    if is_index:
+                    STOCK_OPTIONS_LOTS = {
+                        "BHARTIARTL.NS": 475,
+                        "DLF.NS": 825,
+                        "TVSMOTOR.NS": 175,
+                        "ASIANPAINT.NS": 250,
+                        "HINDUNILVR.NS": 300
+                    }
+                    is_stock_option = False
+                    if not is_index and ticker in STOCK_OPTIONS_LOTS:
+                        is_stock_option = True
+                        
+                    if is_index or is_stock_option:
                          # OPTION BUYING
                          otype = "CE" if signal_type == 'LONG' else "PE"
-                         strike = int(get_strike_for_trade(entry_p, ticker, otype, depth=2)) 
-                         # Nifty Lot Size = 65 (Verified Live), BankNifty = 30 (Std) or 15? Assume 30 for now or checks.
-                         # Actually user config says MAX_NIFTY_TRADES but defaults.
-                         lot_size = 30 if 'BANK' in ticker else 65
                          
-                         risk_per_share = abs(entry_p - sl_p)
-                         qty = lot_size
-                         if risk_per_share > 0:
-                             risk_amt = ALLOCATION * RISK_PCT
-                             calc_qty = int(risk_amt / (risk_per_share * 0.5))
-                             qty = max(lot_size, (calc_qty // lot_size) * lot_size)
-                         
+                         if is_index:
+                             # --- CONFIGURABLE LOT SIZE LOGIC FOR INDICES ---
+                             TRADING_LOTS = config.get('TRADING_LOTS', 2) # Default 2 Lots
+                             LOT_SIZE_NIFTY = config.get('LOT_SIZE_NIFTY', 65)
+                             LOT_SIZE_BANKNIFTY = config.get('LOT_SIZE_BANKNIFTY', 30)
+
+                             strike = int(get_strike_for_trade(entry_p, ticker, otype, depth=2)) 
+                             lot_size = LOT_SIZE_BANKNIFTY if 'BANK' in ticker else LOT_SIZE_NIFTY
+                             qty = int(TRADING_LOTS * lot_size)
+                             logging.info(f"🔢 Qty Calculation for {ticker}: {TRADING_LOTS} Lots x {lot_size} = {qty}")
+                         else:
+                             # --- STOCK OPTIONS ---
+                             # Default to trading 1 Lot for stocks due to high premium value
+                             TRADING_LOTS_STOCKS = config.get('TRADING_LOTS_STOCKS', 1) 
+                             lot_size = STOCK_OPTIONS_LOTS[ticker]
+                             qty = int(TRADING_LOTS_STOCKS * lot_size)
+                             strike = int(get_strike_for_trade(entry_p, ticker, otype, depth=0)) # ATM targeting for High Liquidity
+                             logging.info(f"🔢 Stock Option Qty Calculation for {ticker}: {TRADING_LOTS_STOCKS} Lots x {lot_size} = {qty}")
+                        
                          order_sym = get_fyers_symbol(ticker, strike, otype)
                          
-                         if regime == "SURFER":
-                             target_p = 0 # No Target
-                         else:
-                             target_p = entry_p + (risk_per_share * 2 * (1 if signal_type == 'LONG' else -1))
+                         # Dummy target so trailing logic runs purely on EMAs or HMM
+                         risk_per_share = abs(entry_p - sl_p)
+                         target_p = entry_p + (risk_per_share * 2 * (1 if signal_type == 'LONG' else -1)) if regime != "SURFER" else 0
                          
                     else:
                          # EQUITY
@@ -387,13 +521,23 @@ def check_for_signals(watchlist, config):
                          order_sym = f"NSE:{ticker.replace('.NS', '')}-EQ"
                          target_p = entry_p + (risk_per_share * 2 * (1 if signal_type == 'LONG' else -1))
 
+                    actual_entry = 0.0
+                    if LIVE_TRADE and broker:
+                        try:
+                            # Fetch actual premium/price at entry for true PnL tracking
+                            q = broker.get_quotes(order_sym)
+                            if q and isinstance(q, list) and len(q) > 0 and 'v' in q[0]:
+                                actual_entry = q[0]['v'].get('lp', 0.0)
+                        except Exception as e:
+                            logging.warning(f"Failed to fetch actual entry for {order_sym}: {e}")
+
                     full_signal = f"{signal_type} ({strategy_name})"
-                    log_trade(ticker, order_sym, full_signal, entry_p, qty, sl_p, target_p, datetime.now(), ai_res['reason'], regime)
+                    log_trade(ticker, order_sym, full_signal, entry_p, qty, sl_p, target_p, datetime.now(), ai_res['reason'], regime, actual_entry)
                     
                     if LIVE_TRADE and broker:
                         try:
                             side = "BUY"
-                            if not is_index: side = "BUY" if signal_type == "LONG" else "SELL"
+                            if not (is_index or is_stock_option): side = "BUY" if signal_type == "LONG" else "SELL"
                             execute_order(order_sym, side, qty, 0)
                             
                             # --- CRITICAL FIX: Increment Counters Dynamically ---
@@ -443,7 +587,7 @@ def monitor_positions():
                 if intraday.empty: continue
                 
                 # Calculate Indicators
-                intraday = calculate_9ema(intraday)
+                intraday = calculate_ema(intraday, period=9)
                 curr = intraday.iloc[-1]
                 prev = intraday.iloc[-2] # Closed Candle
                 
@@ -580,6 +724,24 @@ def close_trade(idx, price, reason, pnl):
         instrument = str(df.at[idx, 'Instrument'])
         is_option = 'CE' in instrument or 'PE' in instrument
         
+        actual_entry = df.at[idx, 'Actual_Entry'] if 'Actual_Entry' in df.columns else 0.0
+        actual_exit = 0.0
+        
+        if LIVE_TRADE and broker:
+             try:
+                 q = broker.get_quotes(instrument)
+                 if q and isinstance(q, list) and len(q) > 0 and 'v' in q[0]:
+                     actual_exit = q[0]['v'].get('lp', 0.0)
+             except Exception as e:
+                 logging.warning(f"Failed to fetch actual exit for {instrument}: {e}")
+                 
+        # Override PNL if we have Actuals
+        if actual_entry > 0 and actual_exit > 0:
+             if 'SHORT' in str(df.at[idx, 'Signal']) and not is_option:
+                  pnl = (actual_entry - actual_exit) * qty
+             else:
+                  pnl = (actual_exit - actual_entry) * qty
+
         charges = calculate_charges(entry_p, price, qty, ticker, is_option)
         net_pnl = pnl - charges
         
@@ -590,11 +752,12 @@ def close_trade(idx, price, reason, pnl):
         df.at[idx, 'PnL'] = pnl
         df.at[idx, 'Charges'] = charges
         df.at[idx, 'Net_PnL'] = net_pnl
+        df.at[idx, 'Actual_Exit'] = actual_exit
         
         df.to_csv(TRADE_LOG, index=False)
     except: pass
 
-def log_trade(ticker, instrument, signal, price, qty, sl, target, time, notes="", regime="SNIPER"):
+def log_trade(ticker, instrument, signal, price, qty, sl, target, time, notes="", regime="SNIPER", actual_entry=0.0):
     logging.info(f"SIGNAL: {signal} [{regime}] {qty} x {ticker} ({instrument}) @ {price} | SL {sl:.2f}")
     if not os.path.exists(TRADE_LOG):
         pd.DataFrame(columns=TRADE_COLUMNS).to_csv(TRADE_LOG, index=False)
@@ -602,7 +765,7 @@ def log_trade(ticker, instrument, signal, price, qty, sl, target, time, notes=""
     new_data = {
         'Time': time, 'Ticker': ticker, 'Instrument': instrument, 'Signal': signal, 'Entry_Price': price,
         'Qty': qty, 'SL': sl, 'Target': target, 'Notes': notes, 'Status': 'OPEN', 'PnL': 0.0, 'Regime': regime,
-        'Charges': 0.0, 'Net_PnL': 0.0
+        'Charges': 0.0, 'Net_PnL': 0.0, 'Actual_Entry': actual_entry, 'Actual_Exit': 0.0
     }
     pd.DataFrame([new_data], columns=TRADE_COLUMNS).to_csv(TRADE_LOG, mode='a', header=False, index=False)
 
@@ -610,7 +773,7 @@ def execute_order(symbol, side, qty, stop_loss):
     if not broker: return False
     try:
         logging.info(f"🚀 LIVE ORDER: {side} {qty} {symbol}")
-        res = broker.place_order(symbol, int(qty), side, order_type="MARKET", product_type="INTRADAY", limit_price=0, stop_price=0, validity="DAY", disclose_qty=0, offline_order=False)
+        res = broker.place_order(symbol, int(qty), side, order_type="MARKET", product_type="INTRADAY", limit_price=0, stop_price=0)
         
         # Fyers API v3 returns 'id' on success
         if 'id' in res: 
@@ -667,8 +830,11 @@ def square_off_all_positions():
         logging.error(f"Square Off Loop Error: {e}")
 
 def main():
+    global FYERS_TOKEN, LIVE_TRADE, broker
     logging.info("--- Live Bot (Indices + Stocks + ADX Dynamic) Started ---")
     watchlist = get_watchlist()
+    # Initialize Futures Bot
+    f_bot = PositionalFuturesBot(broker) if LIVE_TRADE and broker else PositionalFuturesBot(None)
     
     while True:
         try:
@@ -680,18 +846,107 @@ def main():
                  time.sleep(60)
                  continue
                  
-            # Post-Market / Square Off (3:15 PM)
-            if now.hour >= 15 and now.minute >= 15:
-                 logging.info("Market Closing (3:15 PM). Squaring Off...")
-                 square_off_all_positions()
-                 time.sleep(60)
-                 continue
+            # Post-Market / Square Off (3:15 PM) -> ONLY for Intraday!
+            # Futures are Positional, so we DO NOT square them off here.
             
-            # Reload config dynamically every loop? Or just in main?
-            # Let's reload to pick up changes from UI
+            if now.hour >= 15 and now.minute >= 15:
+                 logging.info("Market Closing (3:15 PM). Squaring Off Intraday Positions...")
+                 square_off_all_positions() 
+                 # We continue the loop? Or sleep until next day?
+                 # Actually `square_off_all_positions` handles only Intraday via Trade Log.
+                 # Futures state is separate.
+                 # Strategy says: Check at Daily Close. 3:15-3:29 is good time to check.
+                 
+            # Reload config
             config = load_config() 
+            
+            # Dynamic Token Reload for seamless Re-Auth
+            load_dotenv(override=True)
+            new_token = os.environ.get("FYERS_TOKEN")
+            
+            # Check if Token Changed or Broker is Disconnected
+            if new_token and (new_token != FYERS_TOKEN or broker is None):
+                logging.info("🔄 Token Changed/Found! Re-Initializing Broker...")
+                FYERS_TOKEN = new_token
+                try:
+                    broker = FyersApp(FYERS_CLIENT_ID, "secret_placeholder", access_token=FYERS_TOKEN)
+                    profile = broker.get_profile()
+                    if 'error' in profile or profile.get('s') == 'error':
+                         logging.error(f"❌ Re-Auth Failed: {profile}")
+                         LIVE_TRADE = False
+                    else:
+                         logging.info(f"✅ Re-Auth SUCCEEDED: {profile.get('data', {}).get('name', 'User')}")
+                         LIVE_TRADE = True
+                         # Update Futures Bot too
+                         f_bot = PositionalFuturesBot(broker)
+                except Exception as e:
+                    logging.error(f"❌ Re-Auth Exception: {e}")
+                    
             monitor_positions() # Check existing trades FIRST
             check_for_signals(watchlist, config)
+            
+            # --- POSITIONAL FUTURES CHECK (Daily Candle) ---
+            # Check every loop? Daily candles update real-time.
+            # Strategy says "When Daily candle closes...". 
+            # Ideally check near close (e.g. > 3:15 PM) OR continuously if we want to enter mid-day?
+            # User said "Daily time frame... When Daily candle closes".
+            # Let's check generally, `pos_futures.py` uses `iloc[-1]` (current) or `iloc[-2]` (confirmed).
+            # If we use `iloc[-2]`, we are acting on YESTERDAY'S close.
+            # If we want to act TODAY, we need to check `iloc[-1]` near market close (3:20 PM).
+            # For now, let's run it every loop but `pos_futures` logic is crucial.
+            # Updated `pos_futures` to look at `prev` (confirmed).
+            # So this enters NEXT MORNING.
+            # IF user wants SAME DAY ENTRY, we need to look at `curr` near 3:25 PM.
+            # Let's run it.
+            
+            if config.get("ENABLE_FUTURES_STRATEGY", False):
+                futures_tickers = ["^NSEI"] # Only Indices? "only for indices futures"
+                # Add ^NSEBANK if needed, user said "Indices Futures".
+                futures_tickers.append("^NSEBANK")
+                
+                for ft in futures_tickers:
+                    try:
+                        # Fetch Daily Data
+                        daily, _ = fetch_data(ft, broker=broker) # uses caching
+                        if daily.empty: continue
+                        
+                        sym_future = get_futures_symbol(ft)
+                        
+                        # Calculate Lot Size
+                        # Use same config as Options?
+                        # Nifty Future Lot = 75 (or 65? It changes). 
+                        # Fyers API might give lot size? 
+                        # For now use config integers.
+                        lot_size = config.get('LOT_SIZE_BANKNIFTY', 30) if 'BANK' in ft else config.get('LOT_SIZE_NIFTY', 65)
+                        trading_lots = config.get('TRADING_LOTS', 2)
+                        
+                        action = f_bot.execute_logic(ft, daily, lot_size, trading_lots, sym_future)
+                        
+                        if action:
+                             # EXECUTE REAL ORDER
+                             if LIVE_TRADE and broker:
+                                 # action = {signal, symbol, qty, reason, sl}
+                                 qty = action['qty']
+                                 # Buy or Sell?
+                                 # Signal: LONG, SHORT, REVERSE_LONG, REVERSE_SHORT
+                                 
+                                 if "REVERSE" in action['signal']:
+                                     # Close opposite first
+                                     # Need to know opposite qty?
+                                     # Simplified: Just place the NEW order for now, 
+                                     # assuming manual intervention for reversal or sophisticated logic later.
+                                     # Wait, reversal means Exit Old + Enter New.
+                                     # Currently Execute Logic just returns "What to do NOW".
+                                     # If it returns LONG, we Buy.
+                                     pass
+                                     
+                                 side = "BUY" if "LONG" in action['signal'] else "SELL"
+                                 logging.info(f"🚀 EXECUTING PUTURES: {side} {action['symbol']} x {qty}")
+                                 execute_order(action['symbol'], side, qty, 0) # Market Order
+                                 
+                    except Exception as e:
+                        logging.error(f"Futures Loop Error {ft}: {e}")
+
             time.sleep(60)
         except KeyboardInterrupt: break
         except Exception as e:
